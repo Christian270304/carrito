@@ -1536,3 +1536,111 @@ h1 {
     transition: none !important;
   }
 }
+/* Instalación PWA y actualizaciones sin interrumpir compras ni formularios. */
+.pwa-install {
+  margin: 22px 0;
+}
+.install-button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+  width: 100%;
+  padding: 16px;
+  background: var(--soft);
+  border: 1px solid #25ba8625;
+  border-radius: 15px;
+  color: var(--green);
+}
+.install-button > span {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 650;
+}
+.install-button small {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.6;
+  margin-top: 5px;
+}
+.install-help {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.9;
+  padding: 15px 3px 0;
+}
+.install-help p + p {
+  margin-top: 10px;
+}
+.install-help strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.pwa-installed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--green);
+  padding: 14px 0;
+  margin-top: 12px;
+}
+.pwa-update {
+  position: fixed;
+  z-index: 40;
+  left: 14px;
+  right: 14px;
+  top: calc(12px + env(safe-area-inset-top));
+  max-width: 630px;
+  margin: auto;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  background: var(--surface);
+  border: 1px solid var(--green);
+  border-radius: 16px;
+  padding: 13px;
+  box-shadow: var(--shadow);
+  font-size: 11px;
+}
+.pwa-update > svg {
+  color: var(--green);
+}
+.pwa-update > div {
+  flex: 1;
+}
+.pwa-update strong {
+  font-size: 12px;
+}
+.pwa-update p {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.7;
+  margin-top: 3px;
+}
+.pwa-update button {
+  font-size: 11px;
+  color: var(--green);
+  font-weight: 650;
+  padding: 6px;
+}
+.pwa-update button:last-child {
+  color: var(--muted);
+  font-weight: 400;
+}
+@media (display-mode: standalone) {
+  .mobile-main {
+    padding-top: calc(26px + env(safe-area-inset-top));
+  }
+  .login-page {
+    padding-top: calc(30px + env(safe-area-inset-top));
+    padding-bottom: calc(30px + env(safe-area-inset-bottom));
+  }
+}
+@media (min-width: 1050px) and (display-mode: standalone) {
+  .mobile-main {
+    padding-top: calc(51px + env(safe-area-inset-top));
+  }
+}

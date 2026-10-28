@@ -1,3 +1,4 @@
+import PwaInstall, { PwaStatus } from "./PwaInstall";
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ShoppingBasket, ArrowRight, Eye, EyeOff } from "lucide-react";
@@ -151,6 +152,7 @@ function App() {
           </button>
         </form>
         <small>¿No tienes usuario? Pídeselo a quien gestiona la casa.</small>
+        <PwaInstall />
       </section>
       <span className="login-footer">
         HECHO PARA LAS PEQUEÑAS COSAS DE CADA DÍA
@@ -161,5 +163,6 @@ function App() {
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <App />
+    <PwaStatus />
   </StrictMode>,
 );

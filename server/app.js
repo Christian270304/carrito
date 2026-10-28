@@ -461,7 +461,19 @@ export async function createApp(config = process.env) {
     });
   });
   app.use("/api", (_req, res) => fail(res, 404, "Ruta no encontrada."));
-  app.use(express.static(path.join(root, "dist"), { index: false }));
+  app.use(
+    express.static(path.join(root, "dist"), {
+      index: false,
+      setHeaders(res, filePath) {
+        if (
+          ["sw.js", "manifest.webmanifest", "offline.html"].includes(
+            path.basename(filePath),
+          )
+        )
+          res.setHeader("Cache-Control", "no-cache");
+      },
+    }),
+  );
   app.get("/{*path}", (_req, res) =>
     res.sendFile(path.join(root, "dist", "index.html")),
   );

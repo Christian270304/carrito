@@ -1,3 +1,4 @@
+import PwaInstall from "./PwaInstall";
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Plus,
@@ -1097,6 +1098,7 @@ export default function ShoppingList({
                   </p>
                 </div>
               </div>
+              <PwaInstall />
               <p className="profile-info">
                 Los avisos aparecen dentro de la aplicación. No se envían
                 notificaciones cuando está cerrada.
