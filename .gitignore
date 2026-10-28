@@ -7,5 +7,6 @@ dist/
 *.db-*
 *.log
 .DS_Store
-.md
 *.md
+.md
+test/
