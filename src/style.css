@@ -1644,3 +1644,324 @@ h1 {
     padding-top: calc(51px + env(safe-area-inset-top));
   }
 }
+/* Inventario: existencias reales y reposición calculada. */
+.inventory-summary {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 0 0 25px;
+}
+.inventory-summary > div,
+.inventory-summary > button {
+  padding: 17px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 18px;
+  text-align: left;
+  min-width: 0;
+}
+.inventory-summary > button {
+  background: var(--soft);
+}
+.inventory-summary > div > span,
+.inventory-summary > button > span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.inventory-summary > button > span {
+  color: var(--green);
+}
+.inventory-summary strong {
+  display: block;
+  font-size: 28px;
+  line-height: 1.2;
+  font-weight: 700;
+  margin-top: 12px;
+  letter-spacing: -0.7px;
+}
+.inventory-summary strong small {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  line-height: 1.6;
+  font-size: 9px;
+  font-weight: 400;
+  color: var(--muted);
+  letter-spacing: 0;
+  margin-top: 5px;
+}
+.onboarding-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  background: var(--soft);
+  border: 1px solid #25ba8620;
+  border-radius: 17px;
+  padding: 18px;
+  margin-bottom: 24px;
+}
+.onboarding-note > svg {
+  color: var(--green);
+  margin-top: 2px;
+}
+.onboarding-note strong {
+  font-size: 13px;
+}
+.onboarding-note p {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.8;
+  margin-top: 6px;
+}
+.onboarding-note button {
+  font-size: 11px;
+  color: var(--green);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 600;
+  padding: 8px 0 0;
+  min-height: 30px;
+}
+.inventory-filters {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.inventory-filters .store-filter {
+  min-width: 0;
+}
+.inventory-filters .store-filter select {
+  max-width: 210px;
+}
+.inventory-row {
+  min-height: 115px;
+}
+.inventory-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 7px;
+  font-size: 9px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.inventory-status b {
+  font-weight: 600;
+  color: var(--green);
+  font-size: 8px;
+  background: var(--soft);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.inventory-status.low b {
+  color: #e4b76d;
+  background: #ad762918;
+}
+.stock-control {
+  flex-shrink: 0;
+  text-align: center;
+}
+.stock-control > small {
+  display: block;
+  font-size: 8px;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+.stock-control .stepper {
+  margin-left: 0;
+}
+.buy-quantity {
+  flex-shrink: 0;
+  text-align: center;
+  min-width: 65px;
+  margin-left: 5px;
+}
+.buy-quantity > small {
+  font-size: 8px;
+  color: var(--muted);
+  display: block;
+}
+.buy-quantity strong {
+  display: block;
+  color: var(--green);
+  font-size: 28px;
+  line-height: 1.3;
+}
+.buy-quantity > span {
+  font-size: 8px;
+  color: var(--muted);
+  line-height: 1.5;
+  display: block;
+}
+.setup-button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--green);
+  padding: 8px 0 8px 5px;
+}
+.shopping-explanation {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 22px;
+  color: var(--green);
+}
+.shopping-explanation p {
+  font-size: 11px;
+  line-height: 1.9;
+  color: var(--muted);
+}
+.shopping-explanation strong {
+  color: var(--text);
+  font-weight: 500;
+}
+.purchase-item + .purchase-item {
+  border-top: 1px solid var(--line);
+}
+.purchase-item .shopping-row {
+  border: 0;
+}
+.purchase-item .shopping-qty {
+  font-size: 10px;
+  white-space: nowrap;
+}
+.purchase-quantity {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: -4px 0 15px 35px;
+  padding: 7px 0;
+}
+.purchase-quantity > span {
+  font-size: 10px;
+  color: var(--muted);
+}
+.purchase-quantity .stepper > span {
+  font-size: 16px;
+}
+.stock-form {
+  background: var(--soft);
+  border-radius: 15px;
+  padding: 0 13px 13px;
+  margin-top: 11px;
+}
+.stock-form label {
+  font-size: 11px;
+}
+.stock-form p {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.8;
+  margin-top: 6px;
+}
+.stock-form p strong {
+  color: var(--green);
+}
+.field-help {
+  display: block;
+  font-size: 9px;
+  font-weight: 400;
+  color: var(--muted);
+  line-height: 1.8;
+  margin-top: 5px;
+}
+.sheet .emoji-input {
+  font-size: 23px;
+  min-height: 56px;
+}
+.emoji-input::placeholder {
+  font-size: 12px;
+}
+.inventory-row .product-info {
+  gap: 9px;
+}
+.inventory-row .food {
+  width: 32px;
+  font-size: 28px;
+}
+@media (max-width: 380px) {
+  .mobile-main {
+    padding-inline: 16px;
+  }
+  .inventory-row .food {
+    width: 25px;
+    font-size: 23px;
+  }
+  .inventory-row .product-text strong {
+    font-size: 14px;
+  }
+  .inventory-row .product-text small {
+    font-size: 10px;
+  }
+  .inventory-row .stepper button {
+    width: 33px;
+  }
+  .inventory-row .stepper > span {
+    width: 24px;
+  }
+  .inventory-summary > div,
+  .inventory-summary > button {
+    padding: 14px;
+  }
+  .inventory-row .inventory-status {
+    font-size: 8px;
+  }
+}
+@media (min-width: 600px) {
+  .inventory-row .food {
+    width: 40px;
+    font-size: 33px;
+  }
+  .inventory-status {
+    font-size: 10px;
+  }
+  .inventory-status b {
+    font-size: 9px;
+  }
+  .stock-control > small {
+    font-size: 9px;
+  }
+  .buy-quantity > span {
+    font-size: 10px;
+  }
+  .buy-quantity > small {
+    font-size: 10px;
+  }
+  .inventory-summary {
+    margin-bottom: 28px;
+  }
+  .inventory-summary > div,
+  .inventory-summary > button {
+    padding: 23px;
+  }
+  .inventory-summary strong {
+    font-size: 32px;
+  }
+}
+@media (min-width: 1050px) {
+  .inventory-summary {
+    max-width: 1000px;
+  }
+  .onboarding-note {
+    max-width: 1000px;
+  }
+  .inventory-filters {
+    max-width: 1000px;
+  }
+  .shopping-explanation {
+    max-width: 850px;
+  }
+  .inventory-row {
+    min-height: 120px;
+  }
+}

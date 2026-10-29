@@ -1,4 +1,3 @@
-import PwaInstall from "./PwaInstall";
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Plus,
@@ -7,8 +6,8 @@ import {
   Check,
   Pencil,
   Trash2,
-  ShoppingCart,
-  LayoutGrid,
+  ClipboardList,
+  Boxes,
   History,
   X,
   ArrowLeft,
@@ -20,26 +19,35 @@ import {
   SlidersHorizontal,
   RefreshCw,
   Store,
-  Package,
   CheckCheck,
-  ShoppingBasket,
+  House,
+  PackageOpen,
 } from "lucide-react";
 import { api } from "./api";
+import PwaInstall from "./PwaInstall";
+import {
+  acceptsPrice,
+  parsePrice,
+  acceptsCount,
+  parseCount,
+} from "./formNumbers.js";
 export type Profile = { username: string; name: string; theme: string };
 type Product = {
   id: string;
   name: string;
   category: string;
-  quantity: number;
   price: number;
-  done: boolean;
   version: number;
   store: string;
   pack: string;
   emoji: string;
-  basketCount: number;
+  stockCount: number;
+  targetCount: number;
+  configured: boolean;
+  toBuy: number;
   uses: number;
 };
+type Draft = Partial<Product>;
 type Activity = {
   id: number;
   username: string;
@@ -70,9 +78,8 @@ const labels = [
   "Limpieza",
   "Otros",
 ];
-const emojis = ["🥬", "🥛", "🥩", "🥫", "🥖", "🧃", "🧴", "🛍️"];
 const emojiChoices = [
-  "🛍️",
+  "🥣",
   "🥔",
   "🥛",
   "🧀",
@@ -102,18 +109,20 @@ const blank = {
   category: "Despensa",
   store: "",
   pack: "1 unidad",
-  emoji: "🛍️",
-  quantity: 1,
+  emoji: "",
+  stockCount: 0,
+  targetCount: 0,
   price: 0,
-  done: false,
 };
-const actionText: Record<string, string> = {
-  created: "creó el producto",
-  edited: "editó",
+const actions: Record<string, string> = {
+  created: "añadió al inventario",
+  edited: "actualizó",
   deleted: "eliminó",
-  added: "añadió a la cesta",
-  removed: "quitó de la cesta",
+  consumed: "consumió",
+  restocked: "añadió existencias de",
   purchased: "compró",
+  added: "añadió a la antigua cesta",
+  removed: "quitó de la antigua cesta",
 };
 const money = (n: number) =>
   n.toLocaleString("es-ES", { style: "currency", currency: "EUR" });
@@ -136,11 +145,16 @@ export default function ShoppingList({
 }) {
   const [items, setItems] = useState<Product[]>([]),
     [activity, setActivity] = useState<Activity[]>([]),
-    [tab, setTab] = useState("products"),
+    [tab, setTab] = useState("inventory"),
     [category, setCategory] = useState("Todas"),
     [store, setStore] = useState("Todos"),
     [search, setSearch] = useState(""),
-    [edit, setEdit] = useState<Partial<Product> | null>(null),
+    [stockFilter, setStockFilter] = useState("Todos"),
+    [edit, setEdit] = useState<Draft | null>(null),
+    [priceInput, setPriceInput] = useState(""),
+    [stockInput, setStockInput] = useState(""),
+    [targetInput, setTargetInput] = useState(""),
+    [targetTouched, setTargetTouched] = useState(false),
     [profileOpen, setProfileOpen] = useState(false),
     [draftProfile, setDraftProfile] = useState(profile),
     [busy, setBusy] = useState(false),
@@ -168,7 +182,8 @@ export default function ShoppingList({
         api("/api/activity"),
       ]);
       if (!r.ok || !a.ok) throw Error();
-      const products = await r.json();
+      const products: Product[] = await r.json();
+      if (products.some((p) => typeof p.stockCount !== "number")) throw Error();
       const events: Activity[] = await a.json();
       setItems(products);
       setActivity(events);
@@ -181,50 +196,53 @@ export default function ShoppingList({
         );
         if (other)
           notify(
-            `${other.name} ${actionText[other.action] || "actualizó"} ${other.product}`,
+            `${other.name} ${actions[other.action] || "actualizó"} ${other.product}`,
           );
       }
       latest.current = newest;
     } catch {
       setConnected(false);
-      setError("No se pudo actualizar la lista. Comprueba tu conexión.");
+      setError(
+        "No se pudo actualizar el inventario. Comprueba la conexión y que el despliegue haya terminado.",
+      );
     } finally {
-      setLoading(false);
       active.current = false;
+      setLoading(false);
     }
   }, [profile.username, notify]);
   useEffect(() => {
     load();
-    const timer = setInterval(() => {
+    const interval = setInterval(() => {
       if (document.visibilityState === "visible") load();
     }, 15000);
-    const focus = () => {
+    const visible = () => {
       if (document.visibilityState === "visible") load();
     };
-    document.addEventListener("visibilitychange", focus);
+    document.addEventListener("visibilitychange", visible);
     return () => {
-      clearInterval(timer);
-      document.removeEventListener("visibilitychange", focus);
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", visible);
       if (noticeTimer.current) clearTimeout(noticeTimer.current);
     };
   }, [load]);
   const overlayOpen = !!edit || profileOpen || !!askDelete;
   useEffect(() => {
     if (!overlayOpen) return;
-    const oldOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     const previous = document.activeElement as HTMLElement;
+    const old = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !busy) {
-        setEdit(null);
-        setProfileOpen(false);
-        setAskDelete(null);
+        if (askDelete) setAskDelete(null);
+        else {
+          setEdit(null);
+          setProfileOpen(false);
+        }
       }
       if (e.key === "Tab") {
         const sheets = document.querySelectorAll(".sheet");
-        const current = sheets[sheets.length - 1];
         const nodes = Array.from(
-          current.querySelectorAll<HTMLElement>(
+          sheets[sheets.length - 1].querySelectorAll<HTMLElement>(
             "button:not(:disabled), input, select",
           ),
         );
@@ -241,11 +259,11 @@ export default function ShoppingList({
     };
     window.addEventListener("keydown", handler);
     return () => {
-      document.body.style.overflow = oldOverflow;
+      document.body.style.overflow = old;
       window.removeEventListener("keydown", handler);
       previous?.focus();
     };
-  }, [overlayOpen, busy]);
+  }, [overlayOpen, busy, !!askDelete]);
   async function mutate(path: string, method: string, body?: unknown) {
     const r = await api(path, {
       method,
@@ -261,12 +279,16 @@ export default function ShoppingList({
     setBusy(true);
     setError("");
     try {
-      const data = await mutate(`/api/products/${p.id}/quantity`, "POST", {
+      const updated = await mutate(`/api/products/${p.id}/stock`, "POST", {
         delta,
       });
-      setItems((previous) => previous.map((i) => (i.id === p.id ? data : i)));
+      setItems((previous) =>
+        previous.map((i) => (i.id === p.id ? updated : i)),
+      );
       notify(
-        delta > 0 ? `${p.name} en la cesta` : `Una unidad menos de ${p.name}`,
+        delta < 0
+          ? `Una unidad menos de ${p.name}`
+          : `Una unidad más de ${p.name}`,
       );
       await load();
     } catch (e) {
@@ -276,15 +298,38 @@ export default function ShoppingList({
       setBusy(false);
     }
   }
+  function openEdit(p?: Product) {
+    setError("");
+    setEdit(p ? { ...p } : { ...blank });
+    setPriceInput(p?.price ? String(p.price).replace(".", ",") : "");
+    setStockInput(p?.configured ? String(p.stockCount) : "");
+    setTargetInput(p?.configured ? String(p.targetCount) : "");
+    setTargetTouched(!!p?.configured);
+  }
   async function save(e: React.FormEvent) {
     e.preventDefault();
-    if (busy) return;
+    if (!edit || busy) return;
+    const price = parsePrice(priceInput),
+      stockCount = parseCount(stockInput),
+      targetCount = parseCount(targetInput);
+    if (price === null || stockCount === null || targetCount === null) {
+      setError(
+        "Revisa el precio y las cantidades. Usa números positivos; el precio vacío vale 0.",
+      );
+      return;
+    }
     setBusy(true);
     setError("");
     try {
-      await mutate("/api/products", "POST", edit);
+      await mutate("/api/products", "POST", {
+        ...edit,
+        price,
+        stockCount,
+        targetCount,
+        emoji: edit.emoji?.trim() || "🛍️",
+      });
       setEdit(null);
-      notify("Producto guardado");
+      notify("Inventario actualizado");
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -319,11 +364,12 @@ export default function ShoppingList({
     setBusy(true);
     setError("");
     try {
-      const p = await mutate("/api/profile", "POST", {
-        name: draftProfile.name,
-        theme: draftProfile.theme,
-      });
-      onProfile(p);
+      onProfile(
+        await mutate("/api/profile", "POST", {
+          name: draftProfile.name,
+          theme: draftProfile.theme,
+        }),
+      );
       setProfileOpen(false);
       notify("Perfil actualizado");
     } catch (e) {
@@ -338,9 +384,9 @@ export default function ShoppingList({
     setError("");
     try {
       await mutate("/api/checkout", "POST", { items: selected });
-      setSelected([]);
       setShop(null);
-      notify("¡Compra terminada! Los productos siguen en tu catálogo.");
+      setSelected([]);
+      notify("Compra guardada: las unidades ya están en casa.");
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -350,64 +396,93 @@ export default function ShoppingList({
       setBusy(false);
     }
   }
-  const basket = items.filter((p) => p.basketCount > 0),
-    unitCount = basket.reduce((a, p) => a + p.basketCount, 0),
-    stores = Array.from(new Set(items.map((p) => p.store))).sort((a, b) =>
-      a.localeCompare(b),
-    ),
-    basketStores = Array.from(new Set(basket.map((p) => p.store))).sort(
-      (a, b) => a.localeCompare(b),
-    ),
-    frequent = [...items]
-      .filter((p) => p.uses > 0)
-      .sort((a, b) => b.uses - a.uses)
-      .slice(0, 8),
-    filtered = items.filter(
-      (p) =>
-        (category === "Todas" || p.category === category) &&
-        (store === "Todos" || p.store === store) &&
-        p.name.toLocaleLowerCase("es").includes(search.toLocaleLowerCase("es")),
-    ),
-    shopping = shop ? basket.filter((p) => p.store === shop) : [],
-    estimate = basket.reduce((a, p) => a + p.basketCount * p.price, 0);
-  function openEdit(p?: Product) {
-    setError("");
-    setEdit(p ? { ...p } : { ...blank });
-  }
   function select(p: Product) {
     setSelected((previous) =>
       previous.some((s) => s.id === p.id)
         ? previous.filter((s) => s.id !== p.id)
-        : [...previous, { id: p.id, count: p.basketCount, version: p.version }],
+        : [...previous, { id: p.id, count: p.toBuy, version: p.version }],
     );
   }
+  function boughtCount(p: Product, delta: number) {
+    setSelected((previous) =>
+      previous.map((s) =>
+        s.id === p.id
+          ? {
+              ...s,
+              count: Math.max(1, Math.min(999 - p.stockCount, s.count + delta)),
+            }
+          : s,
+      ),
+    );
+  }
+  function navigate(next: string) {
+    setTab(next);
+    setShop(null);
+    setSelected([]);
+    setError("");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+  const needs = items.filter((p) => p.configured && p.toBuy > 0),
+    unknown = items.filter((p) => !p.configured),
+    units = items
+      .filter((p) => p.configured)
+      .reduce((a, p) => a + p.stockCount, 0),
+    toBuy = needs.reduce((a, p) => a + p.toBuy, 0),
+    stores = Array.from(new Set(items.map((p) => p.store))).sort((a, b) =>
+      a.localeCompare(b),
+    ),
+    buyStores = Array.from(new Set(needs.map((p) => p.store))).sort((a, b) =>
+      a.localeCompare(b),
+    ),
+    shopping = shop ? needs.filter((p) => p.store === shop) : [],
+    estimate = needs.reduce((a, p) => a + p.toBuy * p.price, 0),
+    filtered = items.filter(
+      (p) =>
+        (category === "Todas" || p.category === category) &&
+        (store === "Todos" || store === p.store) &&
+        (stockFilter === "Todos" ||
+          (stockFilter === "Falta comprar" && p.toBuy > 0) ||
+          (stockFilter === "Sin existencias" &&
+            p.configured &&
+            p.stockCount === 0) ||
+          (stockFilter === "Por configurar" && !p.configured)) &&
+        p.name.toLocaleLowerCase("es").includes(search.toLocaleLowerCase("es")),
+    );
+  const nav = [
+    { id: "inventory", label: "Inventario", Icon: Boxes },
+    { id: "shopping", label: "Compra", Icon: ClipboardList },
+    { id: "activity", label: "Actividad", Icon: History },
+  ];
   const stepper = (p: Product) => (
-    <div className="stepper">
-      <button
-        disabled={busy || p.basketCount === 0}
-        onClick={() => change(p, -1)}
-        aria-label={`Quitar una unidad de ${p.name}`}
-      >
-        <Minus size={19} />
-      </button>
-      <span
-        className={p.basketCount ? "has-count" : ""}
-        aria-label={`${p.basketCount} unidades`}
-      >
-        {p.basketCount}
-      </span>
-      <button
-        className="plus"
-        disabled={busy || p.basketCount >= 999}
-        onClick={() => change(p, 1)}
-        aria-label={`Añadir una unidad de ${p.name}`}
-      >
-        <Plus size={20} />
-      </button>
+    <div className="stock-control">
+      <small>En casa</small>
+      <div className="stepper">
+        <button
+          disabled={busy || p.stockCount === 0}
+          aria-label={`Consumir una unidad de ${p.name}`}
+          onClick={() => change(p, -1)}
+        >
+          <Minus size={19} />
+        </button>
+        <span
+          className={p.stockCount ? "has-count" : ""}
+          aria-label={`${p.stockCount} unidades en casa`}
+        >
+          {p.stockCount}
+        </span>
+        <button
+          disabled={busy || p.stockCount >= 999}
+          className="plus"
+          aria-label={`Añadir una unidad al inventario de ${p.name}`}
+          onClick={() => change(p, 1)}
+        >
+          <Plus size={20} />
+        </button>
+      </div>
     </div>
   );
-  const productRow = (p: Product, showStore = false) => (
-    <div className="product-row" key={p.id}>
+  const row = (p: Product, buy = false) => (
+    <div className="product-row inventory-row" key={p.id}>
       <button
         className="product-info"
         onClick={() => openEdit(p)}
@@ -415,49 +490,66 @@ export default function ShoppingList({
       >
         <span className="food">{p.emoji}</span>
         <span className="product-text">
-          {showStore && <span className="store-name">{p.store}</span>}
+          {!buy && <span className="store-name">{p.store}</span>}
           <strong>{p.name}</strong>
           <small>
-            {p.category} <span>·</span> {p.pack}
+            {p.category} · {p.pack}
           </small>
+          {p.configured ? (
+            <span className={"inventory-status " + (p.toBuy ? "low" : "")}>
+              <span>Objetivo {p.targetCount}</span>
+              {p.toBuy > 0 ? <b>Faltan {p.toBuy}</b> : <b>Al día</b>}
+            </span>
+          ) : (
+            <span className="inventory-status low">
+              Configura cuánto hay en casa
+            </span>
+          )}
         </span>
       </button>
-      {stepper(p)}
+      {!p.configured ? (
+        <button className="setup-button" onClick={() => openEdit(p)}>
+          Configurar
+          <ChevronRight size={14} />
+        </button>
+      ) : buy ? (
+        <div className="buy-quantity">
+          <small>Comprar</small>
+          <strong>{p.toBuy}</strong>
+          <span>Hay {p.stockCount} en casa</span>
+        </div>
+      ) : (
+        stepper(p)
+      )}
     </div>
   );
   return (
     <div className="mobile-app">
       <aside className="desktop-sidebar">
         <a className="desktop-brand" href="/">
-          <ShoppingBasket /> en casa<span>.</span>
+          <House />
+          en casa<span>.</span>
         </a>
-        <div className="house-label">UNA LISTA, TODA LA CASA</div>
-        {[
-          ["products", "Productos", LayoutGrid],
-          ["basket", "Cesta", ShoppingCart],
-          ["activity", "Actividad", History],
-        ].map(([id, label, Icon]) => (
+        <div className="house-label">SABER QUÉ HAY. COMPRAR LO JUSTO.</div>
+        {nav.map(({ id, label, Icon }) => (
           <button
-            key={id as string}
+            key={id}
             className={tab === id ? "chosen" : ""}
-            onClick={() => {
-              setTab(id as string);
-              setShop(null);
-            }}
+            onClick={() => navigate(id)}
           >
-            {typeof Icon !== "string" && <Icon size={20} />}
-            <span>{label as string}</span>
-            {id === "basket" && unitCount > 0 && <b>{unitCount}</b>}
+            <Icon size={20} />
+            <span>{label}</span>
+            {id === "shopping" && needs.length > 0 && <b>{needs.length}</b>}
           </button>
         ))}
         <div className="sidebar-note">
-          <span>🧺</span>
+          <span>🏡</span>
           <strong>
-            Que no se quede
+            Lo que hay.
             <br />
-            nada por apuntar.
+            Lo que hace falta.
           </strong>
-          <p>La compra, entre todos.</p>
+          <p>Menos dudas antes de comprar.</p>
         </div>
         <button
           className="desktop-profile"
@@ -480,30 +572,30 @@ export default function ShoppingList({
           <div>
             <p className="eyebrow">
               {shop
-                ? "MODO COMPRA"
-                : tab === "basket"
-                  ? "TU COMPRA"
-                  : tab === "activity"
-                    ? "LO QUE PASA EN CASA"
-                    : "LISTA COMPARTIDA"}
+                ? "EN EL SUPERMERCADO"
+                : tab === "inventory"
+                  ? "CONTROL DE CASA"
+                  : tab === "shopping"
+                    ? "SOLO LO QUE FALTA"
+                    : "LO QUE PASA EN CASA"}
             </p>
             <h1>
               {shop ||
-                (tab === "products"
-                  ? "Carrito de casa"
-                  : tab === "basket"
-                    ? "Cesta"
+                (tab === "inventory"
+                  ? "Nuestro inventario"
+                  : tab === "shopping"
+                    ? "Lista de compra"
                     : "Actividad")}
             </h1>
           </div>
           <button
             className="avatar"
+            aria-label="Abrir tu perfil"
             onClick={() => {
               setDraftProfile(profile);
               setError("");
               setProfileOpen(true);
             }}
-            aria-label="Abrir tu perfil"
           >
             {profile.name.slice(0, 1).toUpperCase()}
           </button>
@@ -513,14 +605,14 @@ export default function ShoppingList({
           {loading
             ? "Conectando…"
             : connected
-              ? "Lista compartida al día"
-              : "Sin conexión"}
+              ? "Inventario compartido al día"
+              : "Revisa la conexión"}
           <button
+            aria-label="Actualizar inventario"
             onClick={() => {
               setError("");
               load();
             }}
-            aria-label="Actualizar lista"
           >
             <RefreshCw size={12} />
           </button>
@@ -533,13 +625,70 @@ export default function ShoppingList({
             </button>
           </div>
         )}
-        {tab === "products" && (
+        {tab === "inventory" && (
           <>
+            <div className="inventory-summary">
+              <div>
+                <span>
+                  <Boxes size={18} /> En casa
+                </span>
+                <strong>
+                  {units}
+                  <small>unidades registradas</small>
+                </strong>
+              </div>
+              <button onClick={() => navigate("shopping")}>
+                <span>
+                  <ClipboardList size={18} /> Hace falta
+                </span>
+                <strong>
+                  {toBuy}
+                  <small>
+                    unidades por comprar
+                    <ChevronRight size={12} />
+                  </small>
+                </strong>
+              </button>
+            </div>
+            {unknown.length > 0 && (
+              <div className="onboarding-note">
+                <PackageOpen size={21} />
+                <div>
+                  <strong>
+                    {unknown.length}{" "}
+                    {unknown.length === 1
+                      ? "producto por configurar"
+                      : "productos por configurar"}
+                  </strong>
+                  <p>
+                    Indica las existencias reales y cuánto queréis mantener. No
+                    hemos contado la antigua cesta como productos que ya tenéis.
+                  </p>
+                  <button onClick={() => setStockFilter("Por configurar")}>
+                    Revisar existencias
+                    <ChevronRight size={13} />
+                  </button>
+                </div>
+              </div>
+            )}
+            {!items.length && !loading && (
+              <div className="onboarding-note">
+                <House size={22} />
+                <div>
+                  <strong>Primero, cuenta lo que hay.</strong>
+                  <p>
+                    Registra cada producto, las unidades que tenéis y las que
+                    queréis mantener. Después solo tendrás que descontar lo que
+                    usáis.
+                  </p>
+                </div>
+              </div>
+            )}
             <div className="search-box">
               <Search size={22} />
               <input
                 aria-label="Buscar productos"
-                placeholder="Buscar productos"
+                placeholder="Buscar en casa"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -552,27 +701,6 @@ export default function ShoppingList({
                 </button>
               )}
             </div>
-            {frequent.length > 0 && !search && (
-              <section className="frequent">
-                <div className="section-title">
-                  <h2>Frecuentes</h2>
-                  <small>Un toque y a la cesta</small>
-                </div>
-                <div className="horizontal-scroll">
-                  {frequent.map((p) => (
-                    <button
-                      disabled={busy}
-                      key={p.id}
-                      onClick={() => change(p, 1)}
-                    >
-                      <span>{p.emoji}</span>
-                      <strong>{p.name}</strong>
-                      <Plus size={15} />
-                    </button>
-                  ))}
-                </div>
-              </section>
-            )}
             <div className="filter-row horizontal-scroll">
               <button
                 className={category === "Todas" ? "active" : ""}
@@ -582,8 +710,8 @@ export default function ShoppingList({
               </button>
               {cats.map((c, i) => (
                 <button
-                  className={category === c ? "active" : ""}
                   key={c}
+                  className={category === c ? "active" : ""}
                   onClick={() => setCategory(c)}
                 >
                   {labels[i]}
@@ -595,73 +723,122 @@ export default function ShoppingList({
                 Productos <span className="muted-count">{filtered.length}</span>
               </h2>
               <button className="new-button" onClick={() => openEdit()}>
-                <Plus size={16} /> Nuevo
+                <Plus size={16} />
+                Nuevo
               </button>
             </div>
-            <label className="store-filter">
-              <SlidersHorizontal size={14} />
-              <select
-                aria-label="Filtrar por supermercado"
-                value={store}
-                onChange={(e) => setStore(e.target.value)}
-              >
-                <option value="Todos">Todos los supermercados</option>
-                {stores.map((s) => (
-                  <option key={s}>{s}</option>
-                ))}
-              </select>
-            </label>
+            <div className="inventory-filters">
+              <label className="store-filter">
+                <Store size={14} />
+                <select
+                  aria-label="Filtrar por supermercado"
+                  value={store}
+                  onChange={(e) => setStore(e.target.value)}
+                >
+                  <option value="Todos">Todos los supermercados</option>
+                  {stores.map((s) => (
+                    <option key={s}>{s}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="store-filter">
+                <SlidersHorizontal size={14} />
+                <select
+                  aria-label="Filtrar por existencias"
+                  value={stockFilter}
+                  onChange={(e) => setStockFilter(e.target.value)}
+                >
+                  {[
+                    "Todos",
+                    "Falta comprar",
+                    "Sin existencias",
+                    "Por configurar",
+                  ].map((f) => (
+                    <option key={f}>{f}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
             {loading ? (
               <div className="empty-state">
                 <RefreshCw className="spin" />
-                <h3>Preparando tu lista…</h3>
+                <h3>Preparando tu casa…</h3>
               </div>
             ) : filtered.length ? (
-              <div className="product-card">
-                {filtered.map((p) => productRow(p, true))}
-              </div>
+              <div className="product-card">{filtered.map((p) => row(p))}</div>
             ) : (
               <div className="empty-state">
-                <span>🥑</span>
+                <span>🏡</span>
                 <h3>
                   {items.length
-                    ? "No encontramos ese producto"
-                    : "Tu próxima compra empieza aquí"}
+                    ? "No hay productos con esos filtros"
+                    : "Vamos a organizar tu casa"}
                 </h3>
                 <p>
                   {items.length
                     ? "Prueba otro nombre o cambia los filtros."
-                    : "Crea los productos que compráis en casa y añádelos a la cesta cuando hagan falta."}
+                    : "Añade lo que tenéis o usáis habitualmente. Nosotros calculamos lo que falta."}
                 </p>
                 <button className="primary" onClick={() => openEdit()}>
                   <Plus size={18} />
-                  Crear producto
+                  Añadir producto
                 </button>
               </div>
             )}
             <p className="footnote">
-              <Pencil size={12} /> Toca un producto para editarlo o eliminarlo.
+              <Minus size={12} />
+              Resta lo que consumes. Toca un producto para editarlo.
             </p>
           </>
         )}
-        {tab === "basket" && !shop && (
+        {tab === "shopping" && !shop && (
           <>
             <p className="page-subtitle">
-              {unitCount} {unitCount === 1 ? "unidad" : "unidades"}{" "}
-              <span>·</span> {basket.length}{" "}
-              {basket.length === 1 ? "producto" : "productos"}
+              {needs.length} {needs.length === 1 ? "producto" : "productos"} ·{" "}
+              {toBuy} {toBuy === 1 ? "unidad que falta" : "unidades que faltan"}
             </p>
-            {basket.length > 0 ? (
+            <div className="shopping-explanation">
+              <ClipboardList size={21} />
+              <p>
+                Esta lista se calcula sola:{" "}
+                <strong>lo que quieres tener − lo que hay en casa</strong>. Al
+                terminar la compra, las unidades vuelven al inventario.
+              </p>
+            </div>
+            {unknown.length > 0 && (
+              <div className="onboarding-note">
+                <PackageOpen size={20} />
+                <div>
+                  <strong>
+                    Faltan {unknown.length} productos por configurar
+                  </strong>
+                  <p>Todavía no se incluyen en esta lista.</p>
+                  <button
+                    onClick={() => {
+                      navigate("inventory");
+                      setStockFilter("Por configurar");
+                    }}
+                  >
+                    Revisar existencias
+                    <ChevronRight size={13} />
+                  </button>
+                </div>
+              </div>
+            )}
+            {needs.length > 0 ? (
               <>
                 <div className="basket-summary">
                   <div>
-                    <ShoppingBasket size={20} />
-                    <span>Todo lo que hace falta</span>
+                    <ClipboardList size={20} />
+                    <span>Compra prevista</span>
                   </div>
                   <strong>{money(estimate)}</strong>
-                  <small>Total estimado según tus precios</small>
+                  <small>
+                    Estimado según tus precios. Los precios vacíos cuentan como
+                    0.
+                  </small>
                 </div>
-                {basketStores.map((s) => (
+                {buyStores.map((s) => (
                   <section className="store-section" key={s}>
                     <div className="section-title">
                       <h2 className="store-heading">
@@ -669,16 +846,16 @@ export default function ShoppingList({
                         {s}
                       </h2>
                       <small>
-                        {basket
+                        {needs
                           .filter((p) => p.store === s)
-                          .reduce((a, p) => a + p.basketCount, 0)}{" "}
+                          .reduce((a, p) => a + p.toBuy, 0)}{" "}
                         unidades
                       </small>
                     </div>
                     <div className="product-card">
-                      {basket
+                      {needs
                         .filter((p) => p.store === s)
-                        .map((p) => productRow(p))}
+                        .map((p) => row(p, true))}
                     </div>
                     <button
                       className="primary start-shopping"
@@ -689,8 +866,8 @@ export default function ShoppingList({
                         window.scrollTo({ top: 0, behavior: "smooth" });
                       }}
                     >
-                      <ShoppingCart size={21} />
-                      Empezar compra
+                      <ClipboardList size={20} />
+                      Hacer esta compra
                       <ChevronRight size={18} />
                     </button>
                   </section>
@@ -698,21 +875,29 @@ export default function ShoppingList({
               </>
             ) : (
               <div className="empty-state">
-                <span>🧺</span>
-                <h3>Tu cesta está tranquila</h3>
+                <span>✨</span>
+                <h3>
+                  {items.length
+                    ? "Por ahora, todo al día"
+                    : "Aún no hay nada registrado"}
+                </h3>
                 <p>
-                  Añade lo que falta desde Productos. Lo encontrarás aquí,
-                  organizado por supermercado.
+                  {items.length
+                    ? "Los productos configurados tienen las unidades que queréis mantener. Cuando consumas algo, aparecerá aquí lo que falta."
+                    : "Empieza indicando lo que tenéis en el inventario."}
                 </p>
-                <button className="primary" onClick={() => setTab("products")}>
-                  <Plus size={18} />
-                  Añadir a la cesta
+                <button
+                  className="primary"
+                  onClick={() => navigate("inventory")}
+                >
+                  <Boxes size={18} />
+                  Ver inventario
                 </button>
               </div>
             )}
           </>
         )}
-        {tab === "basket" && shop && (
+        {tab === "shopping" && shop && (
           <>
             <button
               className="back-button"
@@ -722,19 +907,19 @@ export default function ShoppingList({
               }}
             >
               <ArrowLeft size={17} />
-              Volver a la cesta
+              Volver a la lista
             </button>
             <div className="shopping-intro">
-              <span>EN EL SUPERMERCADO</span>
-              <h2>Al carro, sin olvidos.</h2>
+              <span>COMPRA LO QUE FALTA</span>
+              <h2>De la tienda a casa.</h2>
               <p>
-                Marca lo que ya has cogido. Al terminar se quitará de la cesta y
-                seguirá en tus productos.
+                Marca los productos que has comprado. Puedes ajustar cuántas
+                unidades has cogido antes de confirmar.
               </p>
             </div>
             <div className="shopping-progress">
               <span>
-                {selected.length} de {shopping.length} productos
+                {selected.length} de {shopping.length} productos marcados
               </span>
               <strong>
                 {shopping.length
@@ -757,63 +942,97 @@ export default function ShoppingList({
               </div>
             </div>
             <div className="product-card shopping-card">
-              {shopping.map((p) => (
-                <button
-                  className={
-                    "shopping-row " +
-                    (selected.some((s) => s.id === p.id) ? "checked" : "")
-                  }
-                  key={p.id}
-                  onClick={() => select(p)}
-                >
-                  <span className="shopping-check">
-                    {selected.some((s) => s.id === p.id) && <Check size={19} />}
-                  </span>
-                  <span className="food">{p.emoji}</span>
-                  <span className="product-text">
-                    <strong>{p.name}</strong>
-                    <small>
-                      {p.pack} · {p.basketCount}{" "}
-                      {p.basketCount === 1 ? "unidad" : "unidades"}
-                    </small>
-                  </span>
-                  <span className="shopping-qty">×{p.basketCount}</span>
-                </button>
-              ))}
+              {shopping.map((p) => {
+                const choice = selected.find((s) => s.id === p.id);
+                return (
+                  <div key={p.id} className="purchase-item">
+                    <button
+                      className={"shopping-row " + (choice ? "checked" : "")}
+                      onClick={() => select(p)}
+                      disabled={busy}
+                    >
+                      <span className="shopping-check">
+                        {choice && <Check size={19} />}
+                      </span>
+                      <span className="food">{p.emoji}</span>
+                      <span className="product-text">
+                        <strong>{p.name}</strong>
+                        <small>
+                          Hay {p.stockCount} · Objetivo {p.targetCount} ·{" "}
+                          {p.pack}
+                        </small>
+                      </span>
+                      <span className="shopping-qty">Faltan {p.toBuy}</span>
+                    </button>
+                    {choice && (
+                      <div className="purchase-quantity">
+                        <span>Unidades compradas</span>
+                        <div className="stepper">
+                          <button
+                            aria-label={`Comprar una unidad menos de ${p.name}`}
+                            disabled={busy || choice.count <= 1}
+                            onClick={() => boughtCount(p, -1)}
+                          >
+                            <Minus size={17} />
+                          </button>
+                          <span className="has-count">{choice.count}</span>
+                          <button
+                            className="plus"
+                            aria-label={`Comprar una unidad más de ${p.name}`}
+                            disabled={
+                              busy || choice.count >= 999 - p.stockCount
+                            }
+                            onClick={() => boughtCount(p, 1)}
+                          >
+                            <Plus size={17} />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
             {!shopping.length && (
               <div className="empty-state">
                 <CheckCheck />
-                <h3>No quedan productos en esta tienda.</h3>
+                <h3>Ya no falta nada en esta tienda.</h3>
               </div>
             )}
             <div className="checkout-bar">
-              <span>{selected.length} seleccionados</span>
+              <span>
+                {selected.reduce((a, p) => a + p.count, 0)} unidades compradas
+              </span>
               <button
                 className="primary"
                 disabled={!selected.length || busy}
                 onClick={checkout}
               >
-                <CheckCheck size={19} />
-                {busy ? "Guardando…" : "Terminar compra"}
+                <CheckCheck size={18} />
+                {busy ? "Guardando…" : "Guardar compra"}
               </button>
             </div>
+            <p className="footnote">
+              Las unidades se sumarán a lo que hay en casa.
+            </p>
           </>
         )}
         {tab === "activity" && (
           <>
             <p className="page-subtitle">
-              Las pequeñas cosas, hechas entre todos.
+              Lo que entra, lo que se usa y lo que compramos.
             </p>
             <div className="activity-intro">
               <History size={20} />
-              <span>Los últimos 100 cambios de vuestra lista.</span>
+              <span>Los últimos 100 cambios de casa.</span>
             </div>
             {!activity.length ? (
               <div className="empty-state">
                 <span>✨</span>
-                <h3>Una casa por estrenar</h3>
-                <p>Los productos y cambios que hagáis aparecerán aquí.</p>
+                <h3>Una casa por organizar</h3>
+                <p>
+                  Aquí verás los cambios en existencias y las compras de todos.
+                </p>
               </div>
             ) : (
               <div className="activity-list">
@@ -824,7 +1043,7 @@ export default function ShoppingList({
                         <Check size={18} />
                       ) : a.action === "deleted" ? (
                         <Trash2 size={16} />
-                      ) : a.action === "removed" ? (
+                      ) : a.action === "consumed" || a.action === "removed" ? (
                         <Minus size={18} />
                       ) : a.action === "edited" ? (
                         <Pencil size={16} />
@@ -834,7 +1053,8 @@ export default function ShoppingList({
                     </span>
                     <div>
                       <p>
-                        <strong>{a.name}</strong> {actionText[a.action]}{" "}
+                        <strong>{a.name}</strong>{" "}
+                        {actions[a.action] || "actualizó"}{" "}
                         <strong>{a.product}</strong>
                         {a.amount > 0 && (
                           <span className="amount-label"> ×{a.amount}</span>
@@ -850,29 +1070,20 @@ export default function ShoppingList({
         )}
       </main>
       <nav className="bottom-nav" aria-label="Navegación principal">
-        {[
-          ["products", "Productos", LayoutGrid],
-          ["basket", "Cesta", ShoppingCart],
-          ["activity", "Actividad", History],
-        ].map(([id, label, Icon]) => (
+        {nav.map(({ id, label, Icon }) => (
           <button
+            key={id}
             aria-current={tab === id ? "page" : undefined}
             className={tab === id ? "active" : ""}
-            key={id as string}
-            onClick={() => {
-              setTab(id as string);
-              setShop(null);
-              setSelected([]);
-              window.scrollTo({ top: 0, behavior: "smooth" });
-            }}
+            onClick={() => navigate(id)}
           >
             <span className="nav-icon">
-              {typeof Icon !== "string" && <Icon size={24} />}{" "}
-              {id === "basket" && basket.length > 0 && (
-                <b>{basket.length > 99 ? "99+" : basket.length}</b>
+              <Icon size={24} />
+              {id === "shopping" && needs.length > 0 && (
+                <b>{needs.length > 99 ? "99+" : needs.length}</b>
               )}
             </span>
-            <span>{label as string}</span>
+            <span>{label}</span>
           </button>
         ))}
       </nav>
@@ -901,15 +1112,15 @@ export default function ShoppingList({
             >
               <X size={21} />
             </button>
-            <p className="eyebrow">TU CATÁLOGO DE CASA</p>
+            <p className="eyebrow">LO QUE USÁIS EN CASA</p>
             <h2 id="edit-title">
-              {edit.id ? "Editar producto" : "Un nuevo producto"}
+              {edit.id ? "Editar producto" : "Añadir al inventario"}
             </h2>
             <form onSubmit={save}>
               <div className="product-preview">
-                <span>{edit.emoji}</span>
+                <span>{edit.emoji || "🛍️"}</span>
                 <div>
-                  <strong>{edit.name || "¿Qué compramos?"}</strong>
+                  <strong>{edit.name || "¿Qué tenemos en casa?"}</strong>
                   <small>{edit.pack || "Formato del producto"}</small>
                 </div>
               </div>
@@ -918,7 +1129,7 @@ export default function ShoppingList({
                 <input
                   required
                   maxLength={100}
-                  placeholder="Ej. Leche semidesnatada"
+                  placeholder="Ej. Harina de trigo"
                   value={edit.name}
                   onChange={(e) => setEdit({ ...edit, name: e.target.value })}
                 />
@@ -945,14 +1156,9 @@ export default function ShoppingList({
                   Categoría
                   <select
                     value={edit.category}
-                    onChange={(e) => {
-                      const i = cats.indexOf(e.target.value);
-                      setEdit({
-                        ...edit,
-                        category: e.target.value,
-                        emoji: edit.id ? edit.emoji : emojis[i],
-                      });
-                    }}
+                    onChange={(e) =>
+                      setEdit({ ...edit, category: e.target.value })
+                    }
                   >
                     {cats.map((c) => (
                       <option key={c}>{c}</option>
@@ -960,12 +1166,62 @@ export default function ShoppingList({
                   </select>
                 </label>
               </div>
+              <div className="stock-form">
+                <div className="form-grid">
+                  <label>
+                    Cuánto hay en casa
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      maxLength={3}
+                      placeholder="0"
+                      value={stockInput}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (acceptsCount(v)) {
+                          setStockInput(v);
+                          if (!targetTouched) setTargetInput(v);
+                        }
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Cuánto quieres mantener
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      maxLength={3}
+                      placeholder="0"
+                      value={targetInput}
+                      onChange={(e) => {
+                        if (acceptsCount(e.target.value)) {
+                          setTargetTouched(true);
+                          setTargetInput(e.target.value);
+                        }
+                      }}
+                    />
+                  </label>
+                </div>
+                <p>
+                  Si quedan {Number(stockInput || 0)} y quieres tener{" "}
+                  {Number(targetInput || 0)}, la lista propondrá comprar{" "}
+                  <strong>
+                    {Math.max(
+                      0,
+                      Number(targetInput || 0) - Number(stockInput || 0),
+                    )}
+                  </strong>
+                  .
+                </p>
+              </div>
               <div className="form-grid">
                 <label>
                   Formato
                   <input
                     maxLength={60}
-                    placeholder="Ej. botella 1 l, pack 6…"
+                    placeholder="Ej. paquete de 1 kg"
                     value={edit.pack}
                     onChange={(e) => setEdit({ ...edit, pack: e.target.value })}
                   />
@@ -973,20 +1229,38 @@ export default function ShoppingList({
                 <label>
                   Precio por unidad (€)
                   <input
-                    required
-                    type="number"
-                    min="0"
-                    max="1000000"
-                    step="0.01"
-                    value={edit.price}
-                    onChange={(e) =>
-                      setEdit({ ...edit, price: Number(e.target.value) })
-                    }
+                    type="text"
+                    inputMode="decimal"
+                    autoComplete="off"
+                    maxLength={12}
+                    placeholder="Opcional · 0 €"
+                    value={priceInput}
+                    onChange={(e) => {
+                      if (acceptsPrice(e.target.value))
+                        setPriceInput(e.target.value);
+                    }}
                   />
+                  <small className="field-help">
+                    Vacío = 0. Admite coma o punto.
+                  </small>
                 </label>
               </div>
-              <label>Icono del producto</label>
-              <div className="emoji-picker">
+              <label>
+                Emoji o icono
+                <input
+                  className="emoji-input"
+                  type="text"
+                  autoComplete="off"
+                  maxLength={64}
+                  placeholder="Toca aquí y usa tu teclado de emojis"
+                  value={edit.emoji}
+                  onChange={(e) => setEdit({ ...edit, emoji: e.target.value })}
+                />
+                <small className="field-help">
+                  Puedes escribir o pegar cualquier emoji desde el móvil.
+                </small>
+              </label>
+              <div className="emoji-picker" aria-label="Emojis sugeridos">
                 {emojiChoices.map((e) => (
                   <button
                     type="button"
@@ -1012,7 +1286,7 @@ export default function ShoppingList({
                     className="delete-button"
                     disabled={busy}
                     onClick={() => {
-                      const p = items.find((p) => p.id === edit.id);
+                      const p = items.find((i) => i.id === edit.id);
                       if (p) setAskDelete(p);
                     }}
                   >
@@ -1025,7 +1299,7 @@ export default function ShoppingList({
                     ? "Guardando…"
                     : edit.id
                       ? "Guardar cambios"
-                      : "Crear producto"}
+                      : "Añadir producto"}
                 </button>
               </div>
             </form>
@@ -1045,8 +1319,8 @@ export default function ShoppingList({
             <button
               autoFocus
               className="close"
-              aria-label="Cerrar"
               disabled={busy}
+              aria-label="Cerrar"
               onClick={() => setProfileOpen(false)}
             >
               <X size={21} />
@@ -1068,33 +1342,32 @@ export default function ShoppingList({
               <label>Apariencia</label>
               <div className="theme-picker">
                 {[
-                  ["auto", "Auto", Smartphone],
-                  ["light", "Claro", Sun],
-                  ["dark", "Oscuro", Moon],
-                ].map(([id, label, Icon]) => (
+                  { id: "auto", label: "Auto", Icon: Smartphone },
+                  { id: "light", label: "Claro", Icon: Sun },
+                  { id: "dark", label: "Oscuro", Icon: Moon },
+                ].map(({ id, label, Icon }) => (
                   <button
                     type="button"
+                    key={id}
                     className={draftProfile.theme === id ? "selected" : ""}
                     aria-pressed={draftProfile.theme === id}
-                    key={id as string}
                     onClick={() =>
-                      setDraftProfile({ ...draftProfile, theme: id as string })
+                      setDraftProfile({ ...draftProfile, theme: id })
                     }
                   >
-                    {typeof Icon !== "string" && <Icon size={17} />}{" "}
-                    {label as string}
+                    <Icon size={17} />
+                    {label}
                   </button>
                 ))}
               </div>
               <div className="profile-detail">
-                <span>
-                  <RefreshCw size={19} />
-                </span>
+                <RefreshCw size={19} />
                 <div>
-                  <strong>Una lista que compartís</strong>
+                  <strong>Un inventario compartido</strong>
                   <p>
                     Se actualiza cada 15 segundos mientras la aplicación está
-                    abierta. Verás avisos cuando otra persona haga cambios.
+                    abierta. Verás avisos cuando otra persona cambie las
+                    existencias.
                   </p>
                 </div>
               </div>
@@ -1118,7 +1391,7 @@ export default function ShoppingList({
               onClick={onLogout}
             >
               <LogOut size={18} />
-              Cerrar sesión <small>{profile.username}</small>
+              Cerrar sesión<small>{profile.username}</small>
             </button>
           </section>
         </div>
@@ -1141,9 +1414,14 @@ export default function ShoppingList({
             </span>
             <h2 id="delete-title">¿Eliminar {askDelete.name}?</h2>
             <p>
-              Se eliminará del catálogo y de la cesta para todos los miembros de
-              casa.
+              Se eliminará del inventario y dejará de aparecer en la lista de
+              compra de todos.
             </p>
+            {error && (
+              <p className="error-banner" role="alert">
+                {error}
+              </p>
+            )}
             <div className="confirm-actions">
               <button
                 autoFocus

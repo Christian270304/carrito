@@ -103,6 +103,8 @@ export async function createApp(config = process.env) {
     ["emoji", "TEXT NOT NULL DEFAULT '🛍️'"],
     ["basket_count", "INTEGER NOT NULL DEFAULT 0"],
     ["uses", "INTEGER NOT NULL DEFAULT 0"],
+    ["stock_quantity", "INTEGER DEFAULT NULL"],
+    ["target_quantity", "INTEGER DEFAULT NULL"],
   ]) {
     if (!columns.has(name))
       await db.execute(`ALTER TABLE products ADD COLUMN ${name} ${definition}`);
@@ -270,7 +272,13 @@ export async function createApp(config = process.env) {
     store: p.store,
     pack: p.pack,
     emoji: p.emoji,
-    basketCount: Number(p.basket_count),
+    stockCount: Number(p.stock_quantity ?? 0),
+    targetCount: Number(p.target_quantity ?? 0),
+    configured: p.stock_quantity !== null && p.target_quantity !== null,
+    toBuy:
+      p.stock_quantity === null || p.target_quantity === null
+        ? 0
+        : Math.max(0, Number(p.target_quantity) - Number(p.stock_quantity)),
     uses: Number(p.uses),
   });
   const event = (req, action, product, amount = 0) => ({
@@ -306,6 +314,9 @@ export async function createApp(config = process.env) {
     );
     res.json(result.rows.map(mapRow));
   });
+  function validCount(n) {
+    return Number.isInteger(n) && n >= 0 && n <= 999;
+  }
   function validate(p) {
     return (
       p &&
@@ -313,28 +324,39 @@ export async function createApp(config = process.env) {
       p.name.trim().length > 0 &&
       p.name.trim().length <= 100 &&
       categories.includes(p.category) &&
-      Number.isFinite(p.quantity) &&
-      p.quantity >= 0.01 &&
-      p.quantity <= 100000 &&
+      validCount(p.stockCount) &&
+      validCount(p.targetCount) &&
       Number.isFinite(p.price) &&
       p.price >= 0 &&
       p.price <= 1000000 &&
-      typeof p.done === "boolean" &&
       (p.store === undefined ||
         (typeof p.store === "string" && p.store.trim().length <= 50)) &&
       (p.pack === undefined ||
         (typeof p.pack === "string" && p.pack.trim().length <= 60)) &&
       (p.emoji === undefined ||
-        (typeof p.emoji === "string" && p.emoji.length <= 16))
+        (typeof p.emoji === "string" && p.emoji.trim().length <= 64))
     );
   }
   app.post("/api/products", async (req, res) => {
     const p = req.body;
-    if (!validate(p)) return fail(res, 400, "Revisa los datos del producto.");
+    if (p && (!("stockCount" in p) || !("targetCount" in p)))
+      return fail(
+        res,
+        409,
+        "La aplicación ahora utiliza inventario. Actualiza la página antes de guardar.",
+      );
+    if (p && (p.price === undefined || p.price === null || p.price === ""))
+      p.price = 0;
+    if (!validate(p))
+      return fail(
+        res,
+        400,
+        "Revisa las existencias, la cantidad objetivo y el precio.",
+      );
     const extra = [
       p.store?.trim() || "Sin supermercado",
       p.pack?.trim() || "1 unidad",
-      p.emoji || "🛍️",
+      p.emoji?.trim() || "🛍️",
     ];
     return mutate(req, res, async (tx) => {
       if (p.id) {
@@ -345,14 +367,14 @@ export async function createApp(config = process.env) {
         )
           return { status: 400, error: "Versión no válida." };
         const r = await tx.execute({
-          sql: "UPDATE products SET name=?,category=?,quantity=?,price_cents=?,done=?,store=?,pack=?,emoji=?,version=version+1 WHERE id=? AND version=? RETURNING *",
+          sql: "UPDATE products SET name=?,category=?,price_cents=?,store=?,pack=?,emoji=?,stock_quantity=?,target_quantity=?,version=version+1 WHERE id=? AND version=? RETURNING *",
           args: [
             p.name.trim(),
             p.category,
-            p.quantity,
             Math.round(p.price * 100),
-            p.done ? 1 : 0,
             ...extra,
+            p.stockCount,
+            p.targetCount,
             p.id,
             p.version,
           ],
@@ -366,35 +388,36 @@ export async function createApp(config = process.env) {
         return { data: mapRow(r.rows[0]) };
       }
       const r = await tx.execute({
-        sql: "INSERT INTO products(id,name,category,quantity,price_cents,done,store,pack,emoji) VALUES(?,?,?,?,?,?,?,?,?) RETURNING *",
+        sql: "INSERT INTO products(id,name,category,quantity,price_cents,done,store,pack,emoji,stock_quantity,target_quantity) VALUES(?,?,?,1,?,0,?,?,?,?,?) RETURNING *",
         args: [
           randomUUID(),
           p.name.trim(),
           p.category,
-          p.quantity,
           Math.round(p.price * 100),
-          p.done ? 1 : 0,
           ...extra,
+          p.stockCount,
+          p.targetCount,
         ],
       });
       await tx.execute(event(req, "created", p.name.trim()));
       return { status: 201, data: mapRow(r.rows[0]) };
     });
   });
-  app.post("/api/products/:id/quantity", async (req, res) => {
+  app.post("/api/products/:id/stock", async (req, res) => {
     const delta = req.body?.delta;
     if (![1, -1].includes(delta)) return fail(res, 400, "Cantidad no válida.");
     return mutate(req, res, async (tx) => {
       const r = await tx.execute({
-        sql: "UPDATE products SET basket_count=basket_count+?,uses=uses+CASE WHEN ?>0 THEN 1 ELSE 0 END,version=version+1 WHERE id=? AND basket_count+? BETWEEN 0 AND 999 RETURNING *",
-        args: [delta, delta, req.params.id, delta],
+        sql: "UPDATE products SET stock_quantity=stock_quantity+?,version=version+1 WHERE id=? AND stock_quantity IS NOT NULL AND target_quantity IS NOT NULL AND stock_quantity+? BETWEEN 0 AND 999 RETURNING *",
+        args: [delta, req.params.id, delta],
       });
       if (!r.rows.length)
         return {
-          error: "No se puede cambiar esa cantidad. Actualiza la lista.",
+          error:
+            "No se puede cambiar esa cantidad. Configura primero las existencias o actualiza la lista.",
         };
       await tx.execute(
-        event(req, delta > 0 ? "added" : "removed", r.rows[0].name, 1),
+        event(req, delta > 0 ? "restocked" : "consumed", r.rows[0].name, 1),
       );
       return { data: mapRow(r.rows[0]) };
     });
@@ -405,9 +428,10 @@ export async function createApp(config = process.env) {
       !Array.isArray(selections) ||
       !selections.length ||
       selections.length > 200 ||
-      new Set(selections.map((p) => p.id)).size !== selections.length ||
+      new Set(selections.map((p) => p?.id)).size !== selections.length ||
       selections.some(
         (p) =>
+          !p ||
           typeof p.id !== "string" ||
           !Number.isInteger(p.count) ||
           p.count < 1 ||
@@ -415,34 +439,34 @@ export async function createApp(config = process.env) {
           !Number.isInteger(p.version),
       )
     )
-      return fail(res, 400, "Selecciona productos válidos.");
+      return fail(res, 400, "Selecciona productos y cantidades válidos.");
     return mutate(req, res, async (tx) => {
       for (const p of selections) {
         const r = await tx.execute({
-          sql: "UPDATE products SET basket_count=basket_count-?,version=version+1 WHERE id=? AND version=? AND basket_count>=? RETURNING *",
+          sql: "UPDATE products SET stock_quantity=stock_quantity+?,uses=uses+1,version=version+1 WHERE id=? AND version=? AND stock_quantity IS NOT NULL AND target_quantity IS NOT NULL AND stock_quantity+?<=999 RETURNING *",
           args: [p.count, p.id, p.version, p.count],
         });
         if (!r.rows.length)
           return {
             error:
-              "La cesta ha cambiado mientras comprabas. Hemos actualizado la lista; revisa los productos y vuelve a marcarlos.",
+              "El inventario ha cambiado mientras comprabas o la cantidad supera el límite. Revisa las existencias y vuelve a marcar lo comprado.",
           };
         await tx.execute(event(req, "purchased", r.rows[0].name, p.count));
       }
       return { data: { ok: true } };
     });
   });
-  // Compatibilidad con el marcado de la primera versión.
-  app.patch("/api/products/:id", async (req, res) => {
-    if (typeof req.body?.done !== "boolean")
-      return fail(res, 400, "Estado no válido.");
-    const r = await db.execute({
-      sql: "UPDATE products SET done=?,version=version+1 WHERE id=? RETURNING *",
-      args: [req.body.done ? 1 : 0, req.params.id],
-    });
-    if (!r.rows.length) return fail(res, 404, "El producto ya no existe.");
-    res.json(mapRow(r.rows[0]));
-  });
+  // Las versiones antiguas no pueden modificar las cantidades con la semántica de cesta.
+  app.post("/api/products/:id/quantity", (_req, res) =>
+    fail(
+      res,
+      409,
+      "Actualiza la aplicación: las cantidades ahora se controlan desde el inventario.",
+    ),
+  );
+  app.patch("/api/products/:id", (_req, res) =>
+    fail(res, 409, "Actualiza la aplicación para utilizar el inventario."),
+  );
   app.delete("/api/products/:id", async (req, res) => {
     const version = Number(req.query.version);
     if (!Number.isInteger(version) || version < 1)

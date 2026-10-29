@@ -41,7 +41,7 @@ export default function PwaInstall() {
         <Download size={19} />
         <span>
           {busy ? "Abriendo instalación…" : "Instalar aplicación"}
-          <small>Tu compra, desde la pantalla de inicio</small>
+          <small>Tu inventario, desde la pantalla de inicio</small>
         </span>
         {!prompt && <ChevronDown size={17} />}
       </button>
@@ -63,7 +63,7 @@ export default function PwaInstall() {
           )}
           <p>
             La instalación depende del navegador. Necesitas conexión para
-            consultar y guardar la compra.
+            consultar y guardar el inventario.
           </p>
         </div>
       )}

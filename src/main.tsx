@@ -97,14 +97,14 @@ function App() {
         </div>
         <p className="eyebrow">UNA LISTA, TODA LA CASA</p>
         <h1>
-          Que no falte
+          Lo que hay.
           <br />
-          lo de siempre<span>.</span>
+          Lo que hace falta<span>.</span>
         </h1>
         <p>
-          La compra de casa, organizada entre todos.
+          El inventario de casa, organizado entre todos.
           <br />
-          Entra y apunta lo que hace falta.
+          Descuenta lo que usas y compra solo lo que falta.
         </p>
         <form onSubmit={login}>
           <label>

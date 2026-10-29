@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "En casa · Carrito de casa",
+  "name": "En casa · Control de la compra",
   "short_name": "En casa",
-  "description": "La lista de la compra compartida de tu casa.",
+  "description": "Controla lo que hay en casa y compra solo lo que falta.",
   "lang": "es",
   "start_url": "/",
   "scope": "/",
