@@ -1,3 +1,4 @@
+import StoreSettings, { type Supermarket } from "./StoreSettings";
 import {
   type QuantityUnit,
   weighted,
@@ -46,7 +47,13 @@ import {
   acceptsAmount,
   parseAmount,
 } from "./formNumbers.js";
-export type Profile = { username: string; name: string; theme: string };
+
+export type Profile = {
+  username: string;
+  name: string;
+  theme: string;
+};
+
 type Product = {
   id: string;
   name: string;
@@ -54,6 +61,7 @@ type Product = {
   price: number;
   version: number;
   store: string;
+  storeId: string;
   pack: string;
   emoji: string;
   stockCount: number;
@@ -66,7 +74,9 @@ type Product = {
   toBuy: number;
   uses: number;
 };
+
 type Draft = Partial<Product>;
+
 type Activity = {
   id: number;
   username: string;
@@ -77,12 +87,14 @@ type Activity = {
   amount_unit: string;
   created_at: string;
 };
+
 type Selection = {
   id: string;
   count: number;
   version: number;
   unit: QuantityUnit;
 };
+
 const cats = [
   "Fruta y verdura",
   "Lácteos y huevos",
@@ -93,6 +105,7 @@ const cats = [
   "Limpieza",
   "Otros",
 ];
+
 const labels = [
   "Fruta",
   "Lácteos",
@@ -103,36 +116,18 @@ const labels = [
   "Limpieza",
   "Otros",
 ];
+
 const emojiChoices = [
-  "🥣",
-  "🥔",
-  "🥛",
-  "🧀",
-  "🥚",
-  "🥖",
-  "🥩",
-  "🍗",
-  "🐟",
-  "🍎",
-  "🍌",
-  "🍅",
-  "🥬",
-  "🍚",
-  "🍝",
-  "🥫",
-  "🧂",
-  "🧃",
-  "💧",
-  "🧴",
-  "🧻",
-  "🍪",
-  "☕",
-  "🧈",
+  "🥣", "🥔", "🥛", "🧀", "🥚", "🥖", "🥩", "🍗",
+  "🐟", "🍎", "🍌", "🍅", "🥬", "🍚", "🍝", "🥫",
+  "🧂", "🧃", "💧", "🧴", "🧻", "🍪", "☕", "🧈",
 ];
+
 const blank = {
   name: "",
   category: "Despensa",
   store: "",
+  storeId: "",
   pack: "",
   emoji: "",
   unit: "unit" as QuantityUnit,
@@ -141,6 +136,7 @@ const blank = {
   expectedAmount: 0,
   price: 0,
 };
+
 const actions: Record<string, string> = {
   created: "añadió al inventario",
   edited: "actualizó",
@@ -151,8 +147,10 @@ const actions: Record<string, string> = {
   added: "añadió a la antigua cesta",
   removed: "quitó de la antigua cesta",
 };
+
 const money = (n: number) =>
   n.toLocaleString("es-ES", { style: "currency", currency: "EUR" });
+
 function date(s: string) {
   return new Date(s.replace(" ", "T") + "Z").toLocaleString("es-ES", {
     day: "numeric",
@@ -161,6 +159,7 @@ function date(s: string) {
     minute: "2-digit",
   });
 }
+
 export default function ShoppingList({
   profile,
   onProfile,
@@ -170,62 +169,79 @@ export default function ShoppingList({
   onProfile: (p: Profile) => void;
   onLogout: () => void;
 }) {
-  const [items, setItems] = useState<Product[]>([]),
-    [activity, setActivity] = useState<Activity[]>([]),
-    [tab, setTab] = useState("inventory"),
-    [category, setCategory] = useState("Todas"),
-    [store, setStore] = useState("Todos"),
-    [search, setSearch] = useState(""),
-    [stockFilter, setStockFilter] = useState("Todos"),
-    [edit, setEdit] = useState<Draft | null>(null),
-    [priceInput, setPriceInput] = useState(""),
-    [amountInput, setAmountInput] = useState(""),
-    [packInput, setPackInput] = useState("6"),
-    [stepInput, setStepInput] = useState("0,1"),
-    [profileOpen, setProfileOpen] = useState(false),
-    [draftProfile, setDraftProfile] = useState(profile),
-    [busy, setBusy] = useState(false),
-    [loading, setLoading] = useState(true),
-    [error, setError] = useState(""),
-    [notice, setNotice] = useState(""),
-    [connected, setConnected] = useState(false),
-    [shop, setShop] = useState<string | null>(null),
-    [selected, setSelected] = useState<Selection[]>([]),
-    [askDelete, setAskDelete] = useState<Product | null>(null);
-  const latest = useRef(0),
-    active = useRef(false),
-    noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [supermarkets, setSupermarkets] = useState<Supermarket[]>([]);
+  const [items, setItems] = useState<Product[]>([]);
+  const [activity, setActivity] = useState<Activity[]>([]);
+  const [tab, setTab] = useState("inventory");
+  const [category, setCategory] = useState("Todas");
+  const [store, setStore] = useState("Todos");
+  const [search, setSearch] = useState("");
+  const [stockFilter, setStockFilter] = useState("Todos");
+  const [edit, setEdit] = useState<Draft | null>(null);
+  const [priceInput, setPriceInput] = useState("");
+  const [amountInput, setAmountInput] = useState("");
+  const [packInput, setPackInput] = useState("6");
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [draftProfile, setDraftProfile] = useState(profile);
+  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [connected, setConnected] = useState(false);
+  const [shop, setShop] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Selection[]>([]);
+  const [askDelete, setAskDelete] = useState<Product | null>(null);
+
+  const latest = useRef(0);
+  const active = useRef(false);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const notify = useCallback((text: string) => {
     setNotice(text);
     if (noticeTimer.current) clearTimeout(noticeTimer.current);
     noticeTimer.current = setTimeout(() => setNotice(""), 3500);
   }, []);
+
   const load = useCallback(async () => {
     if (active.current) return;
     active.current = true;
+
     try {
-      const [r, a] = await Promise.all([
+      const [r, a, storesResponse] = await Promise.all([
         api("/api/products"),
         api("/api/activity"),
+        api("/api/stores"),
       ]);
-      if (!r.ok || !a.ok) throw Error();
+
+      if (!r.ok || !a.ok || !storesResponse.ok) throw Error();
+
+      setSupermarkets(await storesResponse.json());
+
       const products: Product[] = await r.json();
-      if (products.some((p) => typeof p.stockCount !== "number")) throw Error();
+      if (products.some((p) => typeof p.stockCount !== "number")) {
+        throw Error();
+      }
+
       const events: Activity[] = await a.json();
       setItems(products);
       setActivity(events);
       setConnected(true);
+
       const newest = Number(events[0]?.id || 0);
+
       if (latest.current && newest > latest.current) {
         const other = events.find(
-          (e) =>
-            Number(e.id) > latest.current && e.username !== profile.username,
+          (e) => Number(e.id) > latest.current &&
+            e.username !== profile.username,
         );
-        if (other)
+
+        if (other) {
           notify(
             `${other.name} ${actions[other.action] || "actualizó"} ${other.product}`,
           );
+        }
       }
+
       latest.current = newest;
     } catch {
       setConnected(false);
@@ -237,27 +253,36 @@ export default function ShoppingList({
       setLoading(false);
     }
   }, [profile.username, notify]);
+
   useEffect(() => {
     load();
+
     const interval = setInterval(() => {
       if (document.visibilityState === "visible") load();
     }, 15000);
+
     const visible = () => {
       if (document.visibilityState === "visible") load();
     };
+
     document.addEventListener("visibilitychange", visible);
+
     return () => {
       clearInterval(interval);
       document.removeEventListener("visibilitychange", visible);
       if (noticeTimer.current) clearTimeout(noticeTimer.current);
     };
   }, [load]);
+
   const overlayOpen = !!edit || profileOpen || !!askDelete;
+
   useEffect(() => {
     if (!overlayOpen) return;
+
     const previous = document.activeElement as HTMLElement;
     const old = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !busy) {
         if (askDelete) setAskDelete(null);
@@ -266,6 +291,7 @@ export default function ShoppingList({
           setProfileOpen(false);
         }
       }
+
       if (e.key === "Tab") {
         const sheets = document.querySelectorAll(".sheet");
         const nodes = Array.from(
@@ -273,8 +299,10 @@ export default function ShoppingList({
             "button:not(:disabled), input, select",
           ),
         );
-        const first = nodes[0],
-          last = nodes[nodes.length - 1];
+
+        const first = nodes[0];
+        const last = nodes[nodes.length - 1];
+
         if (e.shiftKey && document.activeElement === first) {
           e.preventDefault();
           last?.focus();
@@ -284,38 +312,47 @@ export default function ShoppingList({
         }
       }
     };
+
     window.addEventListener("keydown", handler);
+
     return () => {
       document.body.style.overflow = old;
       window.removeEventListener("keydown", handler);
       previous?.focus();
     };
   }, [overlayOpen, busy, !!askDelete]);
+
   async function mutate(path: string, method: string, body?: unknown) {
     const r = await api(path, {
       method,
       headers: { "Content-Type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
+
     const data = await r.json();
     if (!r.ok) throw Error(data.error || "No se pudo guardar.");
     return data;
   }
+
   async function change(p: Product, delta: number) {
     if (busy) return;
     setBusy(true);
     setError("");
+
     try {
       const updated = await mutate(`/api/products/${p.id}/stock`, "POST", {
         delta,
         unit: p.unit,
       });
+
       setItems((previous) =>
         previous.map((i) => (i.id === p.id ? updated : i)),
       );
+
       notify(
         `${delta < 0 ? "Descontado" : "Añadido"} ${stockText(p, Math.abs(delta))} de ${p.name}`,
       );
+
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -324,6 +361,7 @@ export default function ShoppingList({
       setBusy(false);
     }
   }
+
   function openEdit(p?: Product) {
     setError("");
     setEdit(p ? { ...p } : { ...blank });
@@ -332,35 +370,31 @@ export default function ShoppingList({
       p?.configured ? String(p.expectedAmount).replace(".", ",") : "",
     );
     setPackInput(p?.unit === "pack" ? String(p.packSize) : "6");
-    setStepInput(
-      p && weighted(p.unit) ? String(p.stockStep).replace(".", ",") : "0,1",
-    );
   }
+
   async function save(e: React.FormEvent) {
     e.preventDefault();
     if (!edit || busy) return;
-    const unit = edit.unit || "unit",
-      price = parsePrice(priceInput),
-      expectedAmount = parseAmount(amountInput, unit),
-      packSize = unit === "pack" ? parseCount(packInput) : 1,
-      stockStep = weighted(unit)
-        ? parseAmount(stepInput || (unit === "kg" ? "0,1" : "0,25"), unit)
-        : 1;
+
+    const unit = edit.unit || "unit";
+    const price = parsePrice(priceInput);
+    const expectedAmount = parseAmount(amountInput, unit);
+    const packSize = unit === "pack" ? parseCount(packInput) : 1;
+    const stockStep = 1;
+
     if (
       price === null ||
       expectedAmount === null ||
       packSize === null ||
-      packSize < 1 ||
-      stockStep === null ||
-      stockStep <= 0
+      packSize < 1
     ) {
-      setError(
-        "Revisa la cantidad prevista, el contenido del pack y el precio.",
-      );
+      setError("Revisa la cantidad prevista, el contenido del pack y el precio.");
       return;
     }
+
     setBusy(true);
     setError("");
+
     try {
       await mutate("/api/products", "POST", {
         ...edit,
@@ -371,6 +405,7 @@ export default function ShoppingList({
         stockStep,
         emoji: edit.emoji?.trim() || "🛍️",
       });
+
       setEdit(null);
       notify("Inventario actualizado");
       await load();
@@ -381,15 +416,18 @@ export default function ShoppingList({
       setBusy(false);
     }
   }
+
   async function remove() {
     if (!askDelete || busy) return;
     setBusy(true);
     setError("");
+
     try {
       await mutate(
         `/api/products/${askDelete.id}?version=${askDelete.version}`,
         "DELETE",
       );
+
       setAskDelete(null);
       setEdit(null);
       notify("Producto eliminado");
@@ -402,10 +440,12 @@ export default function ShoppingList({
       setBusy(false);
     }
   }
+
   async function saveProfile(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError("");
+
     try {
       onProfile(
         await mutate("/api/profile", "POST", {
@@ -413,6 +453,7 @@ export default function ShoppingList({
           theme: draftProfile.theme,
         }),
       );
+
       setProfileOpen(false);
       notify("Perfil actualizado");
     } catch (e) {
@@ -421,10 +462,12 @@ export default function ShoppingList({
       setBusy(false);
     }
   }
+
   async function checkout() {
     if (!selected.length || busy) return;
     setBusy(true);
     setError("");
+
     try {
       await mutate("/api/checkout", "POST", { items: selected });
       setShop(null);
@@ -439,16 +482,23 @@ export default function ShoppingList({
       setBusy(false);
     }
   }
+
   function select(p: Product) {
     setSelected((previous) =>
       previous.some((s) => s.id === p.id)
         ? previous.filter((s) => s.id !== p.id)
         : [
             ...previous,
-            { id: p.id, count: p.toBuy, version: p.version, unit: p.unit },
+            {
+              id: p.id,
+              count: p.toBuy,
+              version: p.version,
+              unit: p.unit,
+            },
           ],
     );
   }
+
   function boughtCount(p: Product, delta: number) {
     setSelected((previous) =>
       previous.map((s) =>
@@ -470,6 +520,7 @@ export default function ShoppingList({
       ),
     );
   }
+
   function navigate(next: string) {
     setTab(next);
     setShop(null);
@@ -477,35 +528,40 @@ export default function ShoppingList({
     setError("");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
-  const needs = items.filter((p) => p.configured && p.toBuy > 0),
-    unknown = items.filter((p) => !p.configured),
-    units = items.filter((p) => p.configured).length,
-    toBuy = needs.length,
-    stores = Array.from(new Set(items.map((p) => p.store))).sort((a, b) =>
-      a.localeCompare(b),
-    ),
-    buyStores = Array.from(new Set(needs.map((p) => p.store))).sort((a, b) =>
-      a.localeCompare(b),
-    ),
-    shopping = shop ? needs.filter((p) => p.store === shop) : [],
-    estimate = needs.reduce((a, p) => a + p.toBuy * p.price, 0),
-    filtered = items.filter(
-      (p) =>
-        (category === "Todas" || p.category === category) &&
-        (store === "Todos" || store === p.store) &&
-        (stockFilter === "Todos" ||
-          (stockFilter === "Falta comprar" && p.toBuy > 0) ||
-          (stockFilter === "Sin existencias" &&
-            p.configured &&
-            p.stockCount === 0) ||
-          (stockFilter === "Por configurar" && !p.configured)) &&
-        p.name.toLocaleLowerCase("es").includes(search.toLocaleLowerCase("es")),
-    );
+
+  const needs = items.filter((p) => p.configured && p.toBuy > 0);
+  const unknown = items.filter((p) => !p.configured);
+  const units = items.filter((p) => p.configured).length;
+  const toBuy = needs.length;
+
+  const stores = Array.from(new Set(items.map((p) => p.store)))
+    .sort((a, b) => a.localeCompare(b));
+
+  const buyStores = Array.from(new Set(needs.map((p) => p.store)))
+    .sort((a, b) => a.localeCompare(b));
+
+  const shopping = shop ? needs.filter((p) => p.store === shop) : [];
+  const estimate = needs.reduce((a, p) => a + p.toBuy * p.price, 0);
+
+  const filtered = items.filter(
+    (p) =>
+      (category === "Todas" || p.category === category) &&
+      (store === "Todos" || store === p.store) &&
+      (
+        stockFilter === "Todos" ||
+        (stockFilter === "Falta comprar" && p.toBuy > 0) ||
+        (stockFilter === "Sin existencias" && p.configured && p.stockCount === 0) ||
+        (stockFilter === "Por configurar" && !p.configured)
+      ) &&
+      p.name.toLocaleLowerCase("es").includes(search.toLocaleLowerCase("es")),
+  );
+
   const nav = [
     { id: "inventory", label: "Inventario", Icon: Boxes },
     { id: "shopping", label: "Compra", Icon: ClipboardList },
     { id: "activity", label: "Actividad", Icon: History },
   ];
+
   const stepper = (p: Product) => (
     <div className="stock-control">
       <small>Quedan · {stockUnit(p)}</small>
@@ -534,6 +590,7 @@ export default function ShoppingList({
       </div>
     </div>
   );
+
   const row = (p: Product, buy = false) => (
     <div className="product-row inventory-row" key={p.id}>
       <button
@@ -553,11 +610,9 @@ export default function ShoppingList({
           {p.configured ? (
             <span className={"inventory-status " + (p.toBuy ? "low" : "")}>
               <span>Debería haber {stockText(p, p.targetCount)}</span>
-              {p.toBuy > 0 ? (
-                <b>Falta {stockText(p, shortage(p))}</b>
-              ) : (
-                <b>Al día</b>
-              )}
+              {p.toBuy > 0
+                ? <b>Falta {stockText(p, shortage(p))}</b>
+                : <b>Al día</b>}
             </span>
           ) : (
             <span className="inventory-status low">
@@ -566,10 +621,10 @@ export default function ShoppingList({
           )}
         </span>
       </button>
+
       {!p.configured ? (
         <button className="setup-button" onClick={() => openEdit(p)}>
-          Configurar
-          <ChevronRight size={14} />
+          Configurar <ChevronRight size={14} />
         </button>
       ) : buy ? (
         <div className="buy-quantity">
@@ -578,19 +633,18 @@ export default function ShoppingList({
           <small>{purchaseUnit(p)}</small>
           <span>Falta {stockText(p, shortage(p))}</span>
         </div>
-      ) : (
-        stepper(p)
-      )}
+      ) : stepper(p)}
     </div>
   );
+
   return (
     <div className="mobile-app">
       <aside className="desktop-sidebar">
         <a className="desktop-brand" href="/">
-          <House />
-          en casa<span>.</span>
+          <House /> en casa<span>.</span>
         </a>
         <div className="house-label">SABER QUÉ HAY. COMPRAR LO JUSTO.</div>
+
         {nav.map(({ id, label, Icon }) => (
           <button
             key={id}
@@ -602,15 +656,13 @@ export default function ShoppingList({
             {id === "shopping" && needs.length > 0 && <b>{needs.length}</b>}
           </button>
         ))}
+
         <div className="sidebar-note">
           <span>🏡</span>
-          <strong>
-            Lo que hay.
-            <br />
-            Lo que hace falta.
-          </strong>
+          <strong>Lo que hay.<br />Lo que hace falta.</strong>
           <p>Menos dudas antes de comprar.</p>
         </div>
+
         <button
           className="desktop-profile"
           onClick={() => {
@@ -627,6 +679,7 @@ export default function ShoppingList({
           <SlidersHorizontal size={17} />
         </button>
       </aside>
+
       <main className="mobile-main">
         <header className="page-header">
           <div>
@@ -640,12 +693,13 @@ export default function ShoppingList({
                     : "LO QUE PASA EN CASA"}
             </p>
             <h1>
-              {shop ||
-                (tab === "inventory"
+              {shop || (
+                tab === "inventory"
                   ? "Nuestro inventario"
                   : tab === "shopping"
                     ? "Lista de compra"
-                    : "Actividad")}
+                    : "Actividad"
+              )}
             </h1>
           </div>
           <button
@@ -660,6 +714,7 @@ export default function ShoppingList({
             {profile.name.slice(0, 1).toUpperCase()}
           </button>
         </header>
+
         <div className="connection">
           <span className={connected ? "online" : "offline"} />
           {loading
@@ -677,6 +732,7 @@ export default function ShoppingList({
             <RefreshCw size={12} />
           </button>
         </div>
+
         {error && !overlayOpen && (
           <div className="error-banner" role="alert">
             <span>{error}</span>
@@ -685,31 +741,28 @@ export default function ShoppingList({
             </button>
           </div>
         )}
+
         {tab === "inventory" && (
           <>
             <div className="inventory-summary">
               <div>
-                <span>
-                  <Boxes size={18} /> En casa
-                </span>
+                <span><Boxes size={18} /> En casa</span>
                 <strong>
                   {units}
                   <small>productos registrados</small>
                 </strong>
               </div>
               <button onClick={() => navigate("shopping")}>
-                <span>
-                  <ClipboardList size={18} /> Hace falta
-                </span>
+                <span><ClipboardList size={18} /> Hace falta</span>
                 <strong>
                   {toBuy}
                   <small>
-                    productos por reponer
-                    <ChevronRight size={12} />
+                    productos por reponer <ChevronRight size={12} />
                   </small>
                 </strong>
               </button>
             </div>
+
             {unknown.length > 0 && (
               <div className="onboarding-note">
                 <PackageOpen size={21} />
@@ -725,12 +778,12 @@ export default function ShoppingList({
                     empezar a descontar lo que usáis.
                   </p>
                   <button onClick={() => setStockFilter("Por configurar")}>
-                    Revisar existencias
-                    <ChevronRight size={13} />
+                    Revisar existencias <ChevronRight size={13} />
                   </button>
                 </div>
               </div>
             )}
+
             {!items.length && !loading && (
               <div className="onboarding-note">
                 <House size={22} />
@@ -743,6 +796,7 @@ export default function ShoppingList({
                 </div>
               </div>
             )}
+
             <div className="search-box">
               <Search size={22} />
               <input
@@ -760,6 +814,7 @@ export default function ShoppingList({
                 </button>
               )}
             </div>
+
             <div className="filter-row horizontal-scroll">
               <button
                 className={category === "Todas" ? "active" : ""}
@@ -777,15 +832,16 @@ export default function ShoppingList({
                 </button>
               ))}
             </div>
+
             <div className="section-title products-title">
               <h2>
                 Productos <span className="muted-count">{filtered.length}</span>
               </h2>
               <button className="new-button" onClick={() => openEdit()}>
-                <Plus size={16} />
-                Nuevo
+                <Plus size={16} /> Nuevo
               </button>
             </div>
+
             <div className="inventory-filters">
               <label className="store-filter">
                 <Store size={14} />
@@ -795,11 +851,10 @@ export default function ShoppingList({
                   onChange={(e) => setStore(e.target.value)}
                 >
                   <option value="Todos">Todos los supermercados</option>
-                  {stores.map((s) => (
-                    <option key={s}>{s}</option>
-                  ))}
+                  {stores.map((s) => <option key={s}>{s}</option>)}
                 </select>
               </label>
+
               <label className="store-filter">
                 <SlidersHorizontal size={14} />
                 <select
@@ -812,12 +867,11 @@ export default function ShoppingList({
                     "Falta comprar",
                     "Sin existencias",
                     "Por configurar",
-                  ].map((f) => (
-                    <option key={f}>{f}</option>
-                  ))}
+                  ].map((f) => <option key={f}>{f}</option>)}
                 </select>
               </label>
             </div>
+
             {loading ? (
               <div className="empty-state">
                 <RefreshCw className="spin" />
@@ -839,41 +893,42 @@ export default function ShoppingList({
                     : "Añade lo que tenéis o usáis habitualmente. Nosotros calculamos lo que falta."}
                 </p>
                 <button className="primary" onClick={() => openEdit()}>
-                  <Plus size={18} />
-                  Añadir producto
+                  <Plus size={18} /> Añadir producto
                 </button>
               </div>
             )}
+
             <p className="footnote">
               <Minus size={12} />
               Resta lo que consumes. Toca un producto para editarlo.
             </p>
           </>
         )}
+
         {tab === "shopping" && !shop && (
           <>
             <p className="page-subtitle">
               {needs.length}{" "}
               {needs.length === 1
                 ? "producto por reponer"
-                : "productos por reponer"}{" "}
-              · cantidades según su formato
+                : "productos por reponer"}
+              {" "}· cantidades según su formato
             </p>
+
             <div className="shopping-explanation">
               <ClipboardList size={21} />
               <p>
                 Esta lista se calcula sola:{" "}
-                <strong>lo que quieres tener − lo que hay en casa</strong>. Al
-                terminar la compra, las unidades vuelven al inventario.
+                <strong>lo que quieres tener − lo que hay en casa</strong>.
+                Al terminar la compra, las unidades vuelven al inventario.
               </p>
             </div>
+
             {unknown.length > 0 && (
               <div className="onboarding-note">
                 <PackageOpen size={20} />
                 <div>
-                  <strong>
-                    Faltan {unknown.length} productos por configurar
-                  </strong>
+                  <strong>Faltan {unknown.length} productos por configurar</strong>
                   <p>Todavía no se incluyen en esta lista.</p>
                   <button
                     onClick={() => {
@@ -881,12 +936,12 @@ export default function ShoppingList({
                       setStockFilter("Por configurar");
                     }}
                   >
-                    Revisar existencias
-                    <ChevronRight size={13} />
+                    Revisar existencias <ChevronRight size={13} />
                   </button>
                 </div>
               </div>
             )}
+
             {needs.length > 0 ? (
               <>
                 <div className="basket-summary">
@@ -896,26 +951,27 @@ export default function ShoppingList({
                   </div>
                   <strong>{money(estimate)}</strong>
                   <small>
-                    Estimado según tus precios. Los precios vacíos cuentan como
-                    0.
+                    Estimado según tus precios. Los precios vacíos cuentan como 0.
                   </small>
                 </div>
+
                 {buyStores.map((s) => (
                   <section className="store-section" key={s}>
                     <div className="section-title">
                       <h2 className="store-heading">
-                        <Store size={15} />
-                        {s}
+                        <Store size={15} /> {s}
                       </h2>
                       <small>
                         {needs.filter((p) => p.store === s).length} productos
                       </small>
                     </div>
+
                     <div className="product-card">
                       {needs
                         .filter((p) => p.store === s)
                         .map((p) => row(p, true))}
                     </div>
+
                     <button
                       className="primary start-shopping"
                       onClick={() => {
@@ -949,13 +1005,13 @@ export default function ShoppingList({
                   className="primary"
                   onClick={() => navigate("inventory")}
                 >
-                  <Boxes size={18} />
-                  Ver inventario
+                  <Boxes size={18} /> Ver inventario
                 </button>
               </div>
             )}
           </>
         )}
+
         {tab === "shopping" && shop && (
           <>
             <button
@@ -965,9 +1021,9 @@ export default function ShoppingList({
                 setSelected([]);
               }}
             >
-              <ArrowLeft size={17} />
-              Volver a la lista
+              <ArrowLeft size={17} /> Volver a la lista
             </button>
+
             <div className="shopping-intro">
               <span>COMPRA LO QUE FALTA</span>
               <h2>De la tienda a casa.</h2>
@@ -976,6 +1032,7 @@ export default function ShoppingList({
                 unidades has cogido antes de confirmar.
               </p>
             </div>
+
             <div className="shopping-progress">
               <span>
                 {selected.length} de {shopping.length} productos marcados
@@ -985,24 +1042,31 @@ export default function ShoppingList({
                   ? Math.round(
                       (selected.filter((s) =>
                         shopping.some((p) => p.id === s.id),
-                      ).length /
-                        shopping.length) *
-                        100,
+                      ).length / shopping.length) * 100,
                     )
-                  : 0}
-                %
+                  : 0}%
               </strong>
               <div>
                 <i
                   style={{
-                    width: `${shopping.length ? (selected.filter((s) => shopping.some((p) => p.id === s.id)).length / shopping.length) * 100 : 0}%`,
+                    width: `${
+                      shopping.length
+                        ? (
+                          selected.filter((s) =>
+                            shopping.some((p) => p.id === s.id),
+                          ).length / shopping.length
+                        ) * 100
+                        : 0
+                    }%`,
                   }}
                 />
               </div>
             </div>
+
             <div className="product-card shopping-card">
               {shopping.map((p) => {
                 const choice = selected.find((s) => s.id === p.id);
+
                 return (
                   <div key={p.id} className="purchase-item">
                     <button
@@ -1023,6 +1087,7 @@ export default function ShoppingList({
                       </span>
                       <span className="shopping-qty">{purchaseText(p)}</span>
                     </button>
+
                     {choice && (
                       <div className="purchase-quantity">
                         <span>Cantidad comprada · {purchaseUnit(p)}</span>
@@ -1045,11 +1110,10 @@ export default function ShoppingList({
                             aria-label={`Aumentar compra de ${p.name}`}
                             disabled={
                               busy ||
-                              choice.count >=
-                                Math.min(
-                                  999,
-                                  (maxStock(p) - p.stockCount) / baseFactor(p),
-                                )
+                              choice.count >= Math.min(
+                                999,
+                                (maxStock(p) - p.stockCount) / baseFactor(p),
+                              )
                             }
                             onClick={() => boughtCount(p, 1)}
                           >
@@ -1062,12 +1126,14 @@ export default function ShoppingList({
                 );
               })}
             </div>
+
             {!shopping.length && (
               <div className="empty-state">
                 <CheckCheck />
                 <h3>Ya no falta nada en esta tienda.</h3>
               </div>
             )}
+
             <div className="checkout-bar">
               <span>{selected.length} productos seleccionados</span>
               <button
@@ -1079,11 +1145,13 @@ export default function ShoppingList({
                 {busy ? "Guardando…" : "Guardar compra"}
               </button>
             </div>
+
             <p className="footnote">
               La compra se sumará al inventario con la unidad de cada producto.
             </p>
           </>
         )}
+
         {tab === "activity" && (
           <>
             <p className="page-subtitle">
@@ -1093,6 +1161,7 @@ export default function ShoppingList({
               <History size={20} />
               <span>Los últimos 100 cambios de casa.</span>
             </div>
+
             {!activity.length ? (
               <div className="empty-state">
                 <span>✨</span>
@@ -1106,17 +1175,15 @@ export default function ShoppingList({
                 {activity.map((a) => (
                   <article key={a.id}>
                     <span className={"activity-icon " + a.action}>
-                      {a.action === "purchased" ? (
-                        <Check size={18} />
-                      ) : a.action === "deleted" ? (
-                        <Trash2 size={16} />
-                      ) : a.action === "consumed" || a.action === "removed" ? (
-                        <Minus size={18} />
-                      ) : a.action === "edited" ? (
-                        <Pencil size={16} />
-                      ) : (
-                        <Plus size={18} />
-                      )}
+                      {a.action === "purchased"
+                        ? <Check size={18} />
+                        : a.action === "deleted"
+                          ? <Trash2 size={16} />
+                          : a.action === "consumed" || a.action === "removed"
+                            ? <Minus size={18} />
+                            : a.action === "edited"
+                              ? <Pencil size={16} />
+                              : <Plus size={18} />}
                     </span>
                     <div>
                       <p>
@@ -1125,8 +1192,7 @@ export default function ShoppingList({
                         <strong>{a.product}</strong>
                         {a.amount > 0 && (
                           <span className="amount-label">
-                            {" "}
-                            · {formatQuantity(a.amount)}{" "}
+                            {" "}· {formatQuantity(a.amount)}{" "}
                             {a.amount_unit || "ud."}
                           </span>
                         )}
@@ -1140,6 +1206,7 @@ export default function ShoppingList({
           </>
         )}
       </main>
+
       <nav className="bottom-nav" aria-label="Navegación principal">
         {nav.map(({ id, label, Icon }) => (
           <button
@@ -1158,12 +1225,13 @@ export default function ShoppingList({
           </button>
         ))}
       </nav>
+
       {notice && (
         <div className="toast" role="status">
-          <Check size={16} />
-          {notice}
+          <Check size={16} /> {notice}
         </div>
       )}
+
       {edit && (
         <div className="overlay" onClick={() => !busy && setEdit(null)}>
           <section
@@ -1183,10 +1251,12 @@ export default function ShoppingList({
             >
               <X size={21} />
             </button>
+
             <p className="eyebrow">LO QUE USÁIS EN CASA</p>
             <h2 id="edit-title">
               {edit.id ? "Editar producto" : "Añadir al inventario"}
             </h2>
+
             <form onSubmit={save}>
               <div className="product-preview">
                 <span>{edit.emoji || "🛍️"}</span>
@@ -1195,6 +1265,7 @@ export default function ShoppingList({
                   <small>{edit.pack || "Formato del producto"}</small>
                 </div>
               </div>
+
               <label>
                 Nombre
                 <input
@@ -1205,24 +1276,36 @@ export default function ShoppingList({
                   onChange={(e) => setEdit({ ...edit, name: e.target.value })}
                 />
               </label>
+
               <div className="form-grid">
                 <label>
                   Supermercado
-                  <input
-                    list="stores"
-                    maxLength={50}
-                    placeholder="Ej. Mercadona"
-                    value={edit.store}
+                  <select
+                    required
+                    value={edit.storeId || ""}
                     onChange={(e) =>
-                      setEdit({ ...edit, store: e.target.value })
+                      setEdit({ ...edit, storeId: e.target.value })
                     }
-                  />
+                  >
+                    <option value="" disabled>
+                      Selecciona un supermercado
+                    </option>
+                    {supermarkets.map((s) => (
+                      <option value={s.id} key={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="manage-stores-link"
+                    onClick={() => {
+                      setDraftProfile(profile);
+                      setProfileOpen(true);
+                    }}
+                  >
+                    Gestionar en Ajustes
+                  </button>
                 </label>
-                <datalist id="stores">
-                  {stores.map((s) => (
-                    <option value={s} key={s} />
-                  ))}
-                </datalist>
+
                 <label>
                   Categoría
                   <select
@@ -1231,22 +1314,22 @@ export default function ShoppingList({
                       setEdit({ ...edit, category: e.target.value })
                     }
                   >
-                    {cats.map((c) => (
-                      <option key={c}>{c}</option>
-                    ))}
+                    {cats.map((c) => <option key={c}>{c}</option>)}
                   </select>
                 </label>
               </div>
+
               <div className="stock-form">
                 <label>
                   Tipo de cantidad
                   <select
                     value={edit.unit || "unit"}
-                    onChange={(e) => {
-                      const unit = e.target.value as QuantityUnit;
-                      setEdit({ ...edit, unit });
-                      setStepInput(unit === "l" ? "0,25" : "0,1");
-                    }}
+                    onChange={(e) =>
+                      setEdit({
+                        ...edit,
+                        unit: e.target.value as QuantityUnit,
+                      })
+                    }
                   >
                     <option value="unit">Unidades</option>
                     <option value="kg">Kilogramos (kg)</option>
@@ -1254,6 +1337,7 @@ export default function ShoppingList({
                     <option value="pack">Packs</option>
                   </select>
                 </label>
+
                 {edit.unit === "pack" && (
                   <label>
                     Unidades en cada pack
@@ -1264,8 +1348,9 @@ export default function ShoppingList({
                       placeholder="Ej. 6"
                       value={packInput}
                       onChange={(e) => {
-                        if (acceptsCount(e.target.value))
+                        if (acceptsCount(e.target.value)) {
                           setPackInput(e.target.value);
+                        }
                       }}
                     />
                     <small className="field-help">
@@ -1273,6 +1358,7 @@ export default function ShoppingList({
                     </small>
                   </label>
                 )}
+
                 <label>
                   Debería haber (
                   {edit.unit === "pack"
@@ -1292,30 +1378,13 @@ export default function ShoppingList({
                     placeholder="Ej. 3"
                     value={amountInput}
                     onChange={(e) => {
-                      if (acceptsAmount(e.target.value, edit.unit || "unit"))
+                      if (acceptsAmount(e.target.value, edit.unit || "unit")) {
                         setAmountInput(e.target.value);
+                      }
                     }}
                   />
                 </label>
-                {weighted(edit.unit || "unit") && (
-                  <label>
-                    Restar cada vez ({edit.unit})
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      maxLength={8}
-                      placeholder={edit.unit === "kg" ? "0,1" : "0,25"}
-                      value={stepInput}
-                      onChange={(e) => {
-                        if (acceptsAmount(e.target.value, edit.unit || "kg"))
-                          setStepInput(e.target.value);
-                      }}
-                    />
-                    <small className="field-help">
-                      Por ejemplo: 0,1 kg son 100 gramos.
-                    </small>
-                  </label>
-                )}
+
                 <p>
                   {edit.id && edit.configured ? (
                     <>
@@ -1330,25 +1399,20 @@ export default function ShoppingList({
                     </>
                   ) : (
                     <>
-                      Empezaremos con esta cantidad. Después descuenta lo que
-                      usas con el botón −.
+                      Empezaremos con esta cantidad. Después descuenta lo
+                      que usas con el botón −.
                     </>
                   )}
                 </p>
+
                 {edit.unit === "pack" && (
                   <p>
-                    Se cuentan las unidades del interior:{" "}
-                    {Number(amountInput || 0) || 0} packs ×{" "}
-                    {Number(packInput || 0) || 0} ={" "}
-                    <strong>
-                      {(Number(amountInput || 0) || 0) *
-                        (Number(packInput || 0) || 0)}{" "}
-                      unidades
-                    </strong>
-                    . Descuentas de una en una y la compra se propone en packs
-                    completos.
+                    Un pack de {Number(packInput || 0) || 0} cuenta como 1 pack.
+                    Si está empezado pero aún queda producto, mantenlo como
+                    disponible; cuando quieras reponerlo, resta 1.
                   </p>
                 )}
+
                 {edit.id &&
                   edit.configured &&
                   edit.unit !== items.find((p) => p.id === edit.id)?.unit && (
@@ -1358,6 +1422,7 @@ export default function ShoppingList({
                     </p>
                   )}
               </div>
+
               <div className="form-grid">
                 <label>
                   Presentación (opcional)
@@ -1368,6 +1433,7 @@ export default function ShoppingList({
                     onChange={(e) => setEdit({ ...edit, pack: e.target.value })}
                   />
                 </label>
+
                 <label>
                   Precio por{" "}
                   {edit.unit === "pack"
@@ -1376,8 +1442,8 @@ export default function ShoppingList({
                       ? "kg"
                       : edit.unit === "l"
                         ? "litro"
-                        : "unidad"}{" "}
-                  (€)
+                        : "unidad"}
+                  {" "}(€)
                   <input
                     type="text"
                     inputMode="decimal"
@@ -1386,8 +1452,9 @@ export default function ShoppingList({
                     placeholder="Opcional · 0 €"
                     value={priceInput}
                     onChange={(e) => {
-                      if (acceptsPrice(e.target.value))
+                      if (acceptsPrice(e.target.value)) {
                         setPriceInput(e.target.value);
+                      }
                     }}
                   />
                   <small className="field-help">
@@ -1395,6 +1462,7 @@ export default function ShoppingList({
                   </small>
                 </label>
               </div>
+
               <label>
                 Emoji o icono
                 <input
@@ -1410,6 +1478,7 @@ export default function ShoppingList({
                   Puedes escribir o pegar cualquier emoji desde el móvil.
                 </small>
               </label>
+
               <div className="emoji-picker" aria-label="Emojis sugeridos">
                 {emojiChoices.map((e) => (
                   <button
@@ -1424,11 +1493,11 @@ export default function ShoppingList({
                   </button>
                 ))}
               </div>
+
               {error && (
-                <p className="error-banner" role="alert">
-                  {error}
-                </p>
+                <p className="error-banner" role="alert">{error}</p>
               )}
+
               <div className="sheet-actions">
                 {edit.id && (
                   <button
@@ -1440,8 +1509,7 @@ export default function ShoppingList({
                       if (p) setAskDelete(p);
                     }}
                   >
-                    <Trash2 size={17} />
-                    Eliminar
+                    <Trash2 size={17} /> Eliminar
                   </button>
                 )}
                 <button className="primary" disabled={busy}>
@@ -1456,8 +1524,12 @@ export default function ShoppingList({
           </section>
         </div>
       )}
+
       {profileOpen && (
-        <div className="overlay" onClick={() => !busy && setProfileOpen(false)}>
+        <div
+          className="overlay"
+          onClick={() => !busy && setProfileOpen(false)}
+        >
           <section
             className="sheet profile-sheet"
             role="dialog"
@@ -1475,8 +1547,10 @@ export default function ShoppingList({
             >
               <X size={21} />
             </button>
+
             <p className="eyebrow">A TU MANERA</p>
-            <h2 id="profile-title">Tu perfil</h2>
+            <h2 id="profile-title">Perfil y ajustes</h2>
+
             <form onSubmit={saveProfile}>
               <label>
                 Nombre
@@ -1489,6 +1563,7 @@ export default function ShoppingList({
                   }
                 />
               </label>
+
               <label>Apariencia</label>
               <div className="theme-picker">
                 {[
@@ -1505,11 +1580,11 @@ export default function ShoppingList({
                       setDraftProfile({ ...draftProfile, theme: id })
                     }
                   >
-                    <Icon size={17} />
-                    {label}
+                    <Icon size={17} /> {label}
                   </button>
                 ))}
               </div>
+
               <div className="profile-detail">
                 <RefreshCw size={19} />
                 <div>
@@ -1521,31 +1596,38 @@ export default function ShoppingList({
                   </p>
                 </div>
               </div>
+
               <PwaInstall />
+
               <p className="profile-info">
                 Los avisos aparecen dentro de la aplicación. No se envían
                 notificaciones cuando está cerrada.
               </p>
+
               {error && (
-                <p className="error-banner" role="alert">
-                  {error}
-                </p>
+                <p className="error-banner" role="alert">{error}</p>
               )}
+
               <button className="primary full-width" disabled={busy}>
                 {busy ? "Guardando…" : "Guardar cambios"}
               </button>
             </form>
+
+            <StoreSettings stores={supermarkets} onChange={load} />
+
             <button
               className="logout-button"
               disabled={busy}
               onClick={onLogout}
             >
               <LogOut size={18} />
-              Cerrar sesión<small>{profile.username}</small>
+              Cerrar sesión
+              <small>{profile.username}</small>
             </button>
           </section>
         </div>
       )}
+
       {askDelete && (
         <div
           className="overlay confirmation-layer"
@@ -1559,19 +1641,17 @@ export default function ShoppingList({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="sheet-handle" />
-            <span className="confirm-icon">
-              <Trash2 size={24} />
-            </span>
+            <span className="confirm-icon"><Trash2 size={24} /></span>
             <h2 id="delete-title">¿Eliminar {askDelete.name}?</h2>
             <p>
-              Se eliminará del inventario y dejará de aparecer en la lista de
-              compra de todos.
+              Se eliminará del inventario y dejará de aparecer en la lista
+              de compra de todos.
             </p>
+
             {error && (
-              <p className="error-banner" role="alert">
-                {error}
-              </p>
+              <p className="error-banner" role="alert">{error}</p>
             )}
+
             <div className="confirm-actions">
               <button
                 autoFocus
