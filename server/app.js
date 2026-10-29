@@ -1,3 +1,14 @@
+import {
+  quantityUnits,
+  roundQuantity,
+  weighted,
+  validAmount,
+  maxStock,
+  purchaseNeeded,
+  purchaseToStock,
+  stockUnit,
+  purchaseUnit,
+} from "../shared/quantities.js";
 import express from "express";
 import helmet from "helmet";
 import { rateLimit } from "express-rate-limit";
@@ -105,6 +116,9 @@ export async function createApp(config = process.env) {
     ["uses", "INTEGER NOT NULL DEFAULT 0"],
     ["stock_quantity", "INTEGER DEFAULT NULL"],
     ["target_quantity", "INTEGER DEFAULT NULL"],
+    ["measurement_unit", "TEXT NOT NULL DEFAULT 'unit'"],
+    ["pack_size", "INTEGER NOT NULL DEFAULT 1"],
+    ["stock_step", "REAL NOT NULL DEFAULT 1"],
   ]) {
     if (!columns.has(name))
       await db.execute(`ALTER TABLE products ADD COLUMN ${name} ${definition}`);
@@ -119,6 +133,13 @@ export async function createApp(config = process.env) {
   await db.execute(
     `CREATE TABLE IF NOT EXISTS profiles(username TEXT PRIMARY KEY,name TEXT NOT NULL,theme TEXT NOT NULL DEFAULT 'auto')`,
   );
+  const activityColumns = new Set(
+    (await db.execute("PRAGMA table_info(activity)")).rows.map((r) => r.name),
+  );
+  if (!activityColumns.has("amount_unit"))
+    await db.execute(
+      "ALTER TABLE activity ADD COLUMN amount_unit TEXT NOT NULL DEFAULT 'ud.'",
+    );
   const app = express();
   if (production) app.set("trust proxy", 1); // Render termina HTTPS en su proxy.
   app.disable("x-powered-by");
@@ -261,29 +282,35 @@ export async function createApp(config = process.env) {
     });
     res.json({ username: req.user.username, name: name.trim(), theme });
   });
-  const mapRow = (p) => ({
-    id: p.id,
-    name: p.name,
-    category: p.category,
-    quantity: Number(p.quantity),
-    price: Number(p.price_cents) / 100,
-    done: !!p.done,
-    version: Number(p.version),
-    store: p.store,
-    pack: p.pack,
-    emoji: p.emoji,
-    stockCount: Number(p.stock_quantity ?? 0),
-    targetCount: Number(p.target_quantity ?? 0),
-    configured: p.stock_quantity !== null && p.target_quantity !== null,
-    toBuy:
-      p.stock_quantity === null || p.target_quantity === null
-        ? 0
-        : Math.max(0, Number(p.target_quantity) - Number(p.stock_quantity)),
-    uses: Number(p.uses),
-  });
-  const event = (req, action, product, amount = 0) => ({
-    sql: "INSERT INTO activity(username,action,product,amount) VALUES(?,?,?,?)",
-    args: [req.user.username, action, product, amount],
+  const mapRow = (p) => {
+    const item = {
+      id: p.id,
+      name: p.name,
+      category: p.category,
+      price: Number(p.price_cents) / 100,
+      version: Number(p.version),
+      store: p.store,
+      pack: p.pack,
+      emoji: p.emoji,
+      stockCount: Number(p.stock_quantity ?? 0),
+      targetCount: Number(p.target_quantity ?? 0),
+      configured: p.stock_quantity !== null && p.target_quantity !== null,
+      unit: p.measurement_unit,
+      packSize: Number(p.pack_size),
+      stockStep: Number(p.stock_step),
+      uses: Number(p.uses),
+    };
+    return {
+      ...item,
+      expectedAmount: roundQuantity(
+        item.targetCount / (item.unit === "pack" ? item.packSize : 1),
+      ),
+      toBuy: item.configured ? purchaseNeeded(item) : 0,
+    };
+  };
+  const event = (req, action, product, amount = 0, unit = "ud.") => ({
+    sql: "INSERT INTO activity(username,action,product,amount,amount_unit) VALUES(?,?,?,?,?)",
+    args: [req.user.username, action, product, amount, unit],
   });
   async function mutate(req, res, fn) {
     const tx = await db.transaction("write");
@@ -314,9 +341,6 @@ export async function createApp(config = process.env) {
     );
     res.json(result.rows.map(mapRow));
   });
-  function validCount(n) {
-    return Number.isInteger(n) && n >= 0 && n <= 999;
-  }
   function validate(p) {
     return (
       p &&
@@ -324,8 +348,13 @@ export async function createApp(config = process.env) {
       p.name.trim().length > 0 &&
       p.name.trim().length <= 100 &&
       categories.includes(p.category) &&
-      validCount(p.stockCount) &&
-      validCount(p.targetCount) &&
+      quantityUnits.includes(p.unit) &&
+      validAmount(p.expectedAmount, p.unit) &&
+      Number.isInteger(p.packSize) &&
+      p.packSize >= 1 &&
+      p.packSize <= 999 &&
+      validAmount(p.stockStep, p.unit === "pack" ? "unit" : p.unit, false) &&
+      (weighted(p.unit) || p.stockStep === 1) &&
       Number.isFinite(p.price) &&
       p.price >= 0 &&
       p.price <= 1000000 &&
@@ -339,11 +368,11 @@ export async function createApp(config = process.env) {
   }
   app.post("/api/products", async (req, res) => {
     const p = req.body;
-    if (p && (!("stockCount" in p) || !("targetCount" in p)))
+    if (p && (!("expectedAmount" in p) || !("unit" in p)))
       return fail(
         res,
         409,
-        "La aplicación ahora utiliza inventario. Actualiza la página antes de guardar.",
+        "Actualiza la aplicación para configurar la cantidad prevista y las unidades.",
       );
     if (p && (p.price === undefined || p.price === null || p.price === ""))
       p.price = 0;
@@ -351,11 +380,13 @@ export async function createApp(config = process.env) {
       return fail(
         res,
         400,
-        "Revisa las existencias, la cantidad objetivo y el precio.",
+        "Revisa la cantidad prevista, el tipo de unidad, el contenido del pack y el precio.",
       );
+    const packSize = p.unit === "pack" ? p.packSize : 1,
+      target = purchaseToStock({ unit: p.unit, packSize }, p.expectedAmount);
     const extra = [
       p.store?.trim() || "Sin supermercado",
-      p.pack?.trim() || "1 unidad",
+      p.pack?.trim() || "",
       p.emoji?.trim() || "🛍️",
     ];
     return mutate(req, res, async (tx) => {
@@ -366,37 +397,56 @@ export async function createApp(config = process.env) {
           p.version < 1
         )
           return { status: 400, error: "Versión no válida." };
+        const old = (
+          await tx.execute({
+            sql: "SELECT * FROM products WHERE id=? AND version=?",
+            args: [p.id, p.version],
+          })
+        ).rows[0];
+        if (!old)
+          return {
+            error:
+              "Otra persona ha cambiado este producto. Cierra y vuelve a abrir la edición.",
+          };
+        // Cambiar el objetivo no repone existencias. Cambiar dimensión (ud./kg/l) empieza un conteo nuevo.
+        const oldDimension = old.measurement_unit;
+        const dimension = p.unit;
+        const stock =
+          old.stock_quantity === null || oldDimension !== dimension
+            ? target
+            : Number(old.stock_quantity);
         const r = await tx.execute({
-          sql: "UPDATE products SET name=?,category=?,price_cents=?,store=?,pack=?,emoji=?,stock_quantity=?,target_quantity=?,version=version+1 WHERE id=? AND version=? RETURNING *",
+          sql: "UPDATE products SET name=?,category=?,price_cents=?,store=?,pack=?,emoji=?,stock_quantity=?,target_quantity=?,measurement_unit=?,pack_size=?,stock_step=?,version=version+1 WHERE id=? AND version=? RETURNING *",
           args: [
             p.name.trim(),
             p.category,
             Math.round(p.price * 100),
             ...extra,
-            p.stockCount,
-            p.targetCount,
+            stock,
+            target,
+            p.unit,
+            packSize,
+            p.stockStep,
             p.id,
             p.version,
           ],
         });
-        if (!r.rows.length)
-          return {
-            error:
-              "Otra persona ha cambiado este producto. Cierra y vuelve a abrir la edición.",
-          };
         await tx.execute(event(req, "edited", p.name.trim()));
         return { data: mapRow(r.rows[0]) };
       }
       const r = await tx.execute({
-        sql: "INSERT INTO products(id,name,category,quantity,price_cents,done,store,pack,emoji,stock_quantity,target_quantity) VALUES(?,?,?,1,?,0,?,?,?,?,?) RETURNING *",
+        sql: "INSERT INTO products(id,name,category,quantity,price_cents,done,store,pack,emoji,stock_quantity,target_quantity,measurement_unit,pack_size,stock_step) VALUES(?,?,?,1,?,0,?,?,?,?,?,?,?,?) RETURNING *",
         args: [
           randomUUID(),
           p.name.trim(),
           p.category,
           Math.round(p.price * 100),
           ...extra,
-          p.stockCount,
-          p.targetCount,
+          target,
+          target,
+          p.unit,
+          packSize,
+          p.stockStep,
         ],
       });
       await tx.execute(event(req, "created", p.name.trim()));
@@ -404,20 +454,53 @@ export async function createApp(config = process.env) {
     });
   });
   app.post("/api/products/:id/stock", async (req, res) => {
-    const delta = req.body?.delta;
-    if (![1, -1].includes(delta)) return fail(res, 400, "Cantidad no válida.");
+    const { delta, unit } = req.body || {};
+    if (!quantityUnits.includes(unit))
+      return fail(
+        res,
+        409,
+        "Actualiza la aplicación para descontar usando las unidades del producto.",
+      );
+    if (
+      !validAmount(
+        Math.abs(delta),
+        unit === "pack" ? "unit" : unit,
+        false,
+        999000,
+      ) ||
+      typeof delta !== "number"
+    )
+      return fail(res, 400, "Cantidad no válida.");
     return mutate(req, res, async (tx) => {
-      const r = await tx.execute({
-        sql: "UPDATE products SET stock_quantity=stock_quantity+?,version=version+1 WHERE id=? AND stock_quantity IS NOT NULL AND target_quantity IS NOT NULL AND stock_quantity+? BETWEEN 0 AND 999 RETURNING *",
-        args: [delta, req.params.id, delta],
-      });
-      if (!r.rows.length)
+      const old = (
+        await tx.execute({
+          sql: "SELECT * FROM products WHERE id=?",
+          args: [req.params.id],
+        })
+      ).rows[0];
+      if (!old || old.stock_quantity === null || old.target_quantity === null)
         return {
           error:
-            "No se puede cambiar esa cantidad. Configura primero las existencias o actualiza la lista.",
+            "Configura primero la cantidad prevista o actualiza el inventario.",
         };
+      const p = mapRow(old),
+        next = roundQuantity(p.stockCount + delta);
+      if (p.unit !== unit)
+        return { error: "La unidad ha cambiado. Actualiza el inventario." };
+      if (next < 0 || next > maxStock(p))
+        return { error: "La cantidad está fuera de los límites del producto." };
+      const r = await tx.execute({
+        sql: "UPDATE products SET stock_quantity=?,version=version+1 WHERE id=? RETURNING *",
+        args: [next, req.params.id],
+      });
       await tx.execute(
-        event(req, delta > 0 ? "restocked" : "consumed", r.rows[0].name, 1),
+        event(
+          req,
+          delta > 0 ? "restocked" : "consumed",
+          p.name,
+          Math.abs(delta),
+          stockUnit(p),
+        ),
       );
       return { data: mapRow(r.rows[0]) };
     });
@@ -433,25 +516,44 @@ export async function createApp(config = process.env) {
         (p) =>
           !p ||
           typeof p.id !== "string" ||
-          !Number.isInteger(p.count) ||
-          p.count < 1 ||
-          p.count > 999 ||
+          !quantityUnits.includes(p.unit) ||
+          !validAmount(p.count, p.unit, false) ||
           !Number.isInteger(p.version),
       )
     )
-      return fail(res, 400, "Selecciona productos y cantidades válidos.");
+      return fail(
+        res,
+        400,
+        "Selecciona productos con cantidades y unidades válidas.",
+      );
     return mutate(req, res, async (tx) => {
-      for (const p of selections) {
-        const r = await tx.execute({
-          sql: "UPDATE products SET stock_quantity=stock_quantity+?,uses=uses+1,version=version+1 WHERE id=? AND version=? AND stock_quantity IS NOT NULL AND target_quantity IS NOT NULL AND stock_quantity+?<=999 RETURNING *",
-          args: [p.count, p.id, p.version, p.count],
-        });
-        if (!r.rows.length)
+      for (const selection of selections) {
+        const old = (
+          await tx.execute({
+            sql: "SELECT * FROM products WHERE id=? AND version=?",
+            args: [selection.id, selection.version],
+          })
+        ).rows[0];
+        if (!old || old.stock_quantity === null || old.target_quantity === null)
           return {
             error:
-              "El inventario ha cambiado mientras comprabas o la cantidad supera el límite. Revisa las existencias y vuelve a marcar lo comprado.",
+              "El inventario ha cambiado. Revisa los productos y vuelve a marcar lo comprado.",
           };
-        await tx.execute(event(req, "purchased", r.rows[0].name, p.count));
+        const p = mapRow(old),
+          actual = purchaseToStock(p, selection.count),
+          next = roundQuantity(p.stockCount + actual);
+        if (selection.unit !== p.unit || next > maxStock(p))
+          return {
+            error:
+              "Las unidades han cambiado o la cantidad supera el límite. Revisa la compra.",
+          };
+        await tx.execute({
+          sql: "UPDATE products SET stock_quantity=?,uses=uses+1,version=version+1 WHERE id=?",
+          args: [next, p.id],
+        });
+        await tx.execute(
+          event(req, "purchased", p.name, selection.count, purchaseUnit(p)),
+        );
       }
       return { data: { ok: true } };
     });

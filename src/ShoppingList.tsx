@@ -1,3 +1,16 @@
+import {
+  type QuantityUnit,
+  weighted,
+  roundQuantity,
+  formatQuantity,
+  stockText,
+  purchaseText,
+  stockUnit,
+  purchaseUnit,
+  shortage,
+  maxStock,
+  baseFactor,
+} from "../shared/quantities.js";
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Plus,
@@ -30,6 +43,8 @@ import {
   parsePrice,
   acceptsCount,
   parseCount,
+  acceptsAmount,
+  parseAmount,
 } from "./formNumbers.js";
 export type Profile = { username: string; name: string; theme: string };
 type Product = {
@@ -42,6 +57,10 @@ type Product = {
   pack: string;
   emoji: string;
   stockCount: number;
+  unit: QuantityUnit;
+  packSize: number;
+  stockStep: number;
+  expectedAmount: number;
   targetCount: number;
   configured: boolean;
   toBuy: number;
@@ -55,9 +74,15 @@ type Activity = {
   action: string;
   product: string;
   amount: number;
+  amount_unit: string;
   created_at: string;
 };
-type Selection = { id: string; count: number; version: number };
+type Selection = {
+  id: string;
+  count: number;
+  version: number;
+  unit: QuantityUnit;
+};
 const cats = [
   "Fruta y verdura",
   "Lácteos y huevos",
@@ -108,10 +133,12 @@ const blank = {
   name: "",
   category: "Despensa",
   store: "",
-  pack: "1 unidad",
+  pack: "",
   emoji: "",
-  stockCount: 0,
-  targetCount: 0,
+  unit: "unit" as QuantityUnit,
+  packSize: 1,
+  stockStep: 1,
+  expectedAmount: 0,
   price: 0,
 };
 const actions: Record<string, string> = {
@@ -152,9 +179,9 @@ export default function ShoppingList({
     [stockFilter, setStockFilter] = useState("Todos"),
     [edit, setEdit] = useState<Draft | null>(null),
     [priceInput, setPriceInput] = useState(""),
-    [stockInput, setStockInput] = useState(""),
-    [targetInput, setTargetInput] = useState(""),
-    [targetTouched, setTargetTouched] = useState(false),
+    [amountInput, setAmountInput] = useState(""),
+    [packInput, setPackInput] = useState("6"),
+    [stepInput, setStepInput] = useState("0,1"),
     [profileOpen, setProfileOpen] = useState(false),
     [draftProfile, setDraftProfile] = useState(profile),
     [busy, setBusy] = useState(false),
@@ -281,14 +308,13 @@ export default function ShoppingList({
     try {
       const updated = await mutate(`/api/products/${p.id}/stock`, "POST", {
         delta,
+        unit: p.unit,
       });
       setItems((previous) =>
         previous.map((i) => (i.id === p.id ? updated : i)),
       );
       notify(
-        delta < 0
-          ? `Una unidad menos de ${p.name}`
-          : `Una unidad más de ${p.name}`,
+        `${delta < 0 ? "Descontado" : "Añadido"} ${stockText(p, Math.abs(delta))} de ${p.name}`,
       );
       await load();
     } catch (e) {
@@ -302,19 +328,34 @@ export default function ShoppingList({
     setError("");
     setEdit(p ? { ...p } : { ...blank });
     setPriceInput(p?.price ? String(p.price).replace(".", ",") : "");
-    setStockInput(p?.configured ? String(p.stockCount) : "");
-    setTargetInput(p?.configured ? String(p.targetCount) : "");
-    setTargetTouched(!!p?.configured);
+    setAmountInput(
+      p?.configured ? String(p.expectedAmount).replace(".", ",") : "",
+    );
+    setPackInput(p?.unit === "pack" ? String(p.packSize) : "6");
+    setStepInput(
+      p && weighted(p.unit) ? String(p.stockStep).replace(".", ",") : "0,1",
+    );
   }
   async function save(e: React.FormEvent) {
     e.preventDefault();
     if (!edit || busy) return;
-    const price = parsePrice(priceInput),
-      stockCount = parseCount(stockInput),
-      targetCount = parseCount(targetInput);
-    if (price === null || stockCount === null || targetCount === null) {
+    const unit = edit.unit || "unit",
+      price = parsePrice(priceInput),
+      expectedAmount = parseAmount(amountInput, unit),
+      packSize = unit === "pack" ? parseCount(packInput) : 1,
+      stockStep = weighted(unit)
+        ? parseAmount(stepInput || (unit === "kg" ? "0,1" : "0,25"), unit)
+        : 1;
+    if (
+      price === null ||
+      expectedAmount === null ||
+      packSize === null ||
+      packSize < 1 ||
+      stockStep === null ||
+      stockStep <= 0
+    ) {
       setError(
-        "Revisa el precio y las cantidades. Usa números positivos; el precio vacío vale 0.",
+        "Revisa la cantidad prevista, el contenido del pack y el precio.",
       );
       return;
     }
@@ -324,8 +365,10 @@ export default function ShoppingList({
       await mutate("/api/products", "POST", {
         ...edit,
         price,
-        stockCount,
-        targetCount,
+        unit,
+        expectedAmount,
+        packSize,
+        stockStep,
         emoji: edit.emoji?.trim() || "🛍️",
       });
       setEdit(null);
@@ -386,7 +429,7 @@ export default function ShoppingList({
       await mutate("/api/checkout", "POST", { items: selected });
       setShop(null);
       setSelected([]);
-      notify("Compra guardada: las unidades ya están en casa.");
+      notify("Compra guardada: el inventario ya está actualizado.");
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -400,7 +443,10 @@ export default function ShoppingList({
     setSelected((previous) =>
       previous.some((s) => s.id === p.id)
         ? previous.filter((s) => s.id !== p.id)
-        : [...previous, { id: p.id, count: p.toBuy, version: p.version }],
+        : [
+            ...previous,
+            { id: p.id, count: p.toBuy, version: p.version, unit: p.unit },
+          ],
     );
   }
   function boughtCount(p: Product, delta: number) {
@@ -409,7 +455,16 @@ export default function ShoppingList({
         s.id === p.id
           ? {
               ...s,
-              count: Math.max(1, Math.min(999 - p.stockCount, s.count + delta)),
+              count: roundQuantity(
+                Math.max(
+                  weighted(p.unit) ? 0.001 : 1,
+                  Math.min(
+                    999,
+                    (maxStock(p) - p.stockCount) / baseFactor(p),
+                    s.count + delta * (weighted(p.unit) ? p.stockStep : 1),
+                  ),
+                ),
+              ),
             }
           : s,
       ),
@@ -424,10 +479,8 @@ export default function ShoppingList({
   }
   const needs = items.filter((p) => p.configured && p.toBuy > 0),
     unknown = items.filter((p) => !p.configured),
-    units = items
-      .filter((p) => p.configured)
-      .reduce((a, p) => a + p.stockCount, 0),
-    toBuy = needs.reduce((a, p) => a + p.toBuy, 0),
+    units = items.filter((p) => p.configured).length,
+    toBuy = needs.length,
     stores = Array.from(new Set(items.map((p) => p.store))).sort((a, b) =>
       a.localeCompare(b),
     ),
@@ -455,26 +508,26 @@ export default function ShoppingList({
   ];
   const stepper = (p: Product) => (
     <div className="stock-control">
-      <small>En casa</small>
+      <small>Quedan · {stockUnit(p)}</small>
       <div className="stepper">
         <button
           disabled={busy || p.stockCount === 0}
-          aria-label={`Consumir una unidad de ${p.name}`}
-          onClick={() => change(p, -1)}
+          aria-label={`Consumir ${stockText(p, Math.min(p.stockStep, p.stockCount))} de ${p.name}`}
+          onClick={() => change(p, -Math.min(p.stockStep, p.stockCount))}
         >
           <Minus size={19} />
         </button>
         <span
           className={p.stockCount ? "has-count" : ""}
-          aria-label={`${p.stockCount} unidades en casa`}
+          aria-label={`${stockText(p)} disponibles`}
         >
-          {p.stockCount}
+          {formatQuantity(p.stockCount)}
         </span>
         <button
-          disabled={busy || p.stockCount >= 999}
+          disabled={busy || p.stockCount + p.stockStep > maxStock(p)}
           className="plus"
-          aria-label={`Añadir una unidad al inventario de ${p.name}`}
-          onClick={() => change(p, 1)}
+          aria-label={`Añadir ${stockText(p, p.stockStep)} al inventario de ${p.name}`}
+          onClick={() => change(p, p.stockStep)}
         >
           <Plus size={20} />
         </button>
@@ -493,16 +546,22 @@ export default function ShoppingList({
           {!buy && <span className="store-name">{p.store}</span>}
           <strong>{p.name}</strong>
           <small>
-            {p.category} · {p.pack}
+            {p.category}
+            {p.pack ? " · " + p.pack : ""}
+            {p.unit === "pack" ? ` · Pack de ${p.packSize}` : ""}
           </small>
           {p.configured ? (
             <span className={"inventory-status " + (p.toBuy ? "low" : "")}>
-              <span>Objetivo {p.targetCount}</span>
-              {p.toBuy > 0 ? <b>Faltan {p.toBuy}</b> : <b>Al día</b>}
+              <span>Debería haber {stockText(p, p.targetCount)}</span>
+              {p.toBuy > 0 ? (
+                <b>Falta {stockText(p, shortage(p))}</b>
+              ) : (
+                <b>Al día</b>
+              )}
             </span>
           ) : (
             <span className="inventory-status low">
-              Configura cuánto hay en casa
+              Indica cuánto debería haber
             </span>
           )}
         </span>
@@ -515,8 +574,9 @@ export default function ShoppingList({
       ) : buy ? (
         <div className="buy-quantity">
           <small>Comprar</small>
-          <strong>{p.toBuy}</strong>
-          <span>Hay {p.stockCount} en casa</span>
+          <strong>{formatQuantity(p.toBuy)}</strong>
+          <small>{purchaseUnit(p)}</small>
+          <span>Falta {stockText(p, shortage(p))}</span>
         </div>
       ) : (
         stepper(p)
@@ -634,7 +694,7 @@ export default function ShoppingList({
                 </span>
                 <strong>
                   {units}
-                  <small>unidades registradas</small>
+                  <small>productos registrados</small>
                 </strong>
               </div>
               <button onClick={() => navigate("shopping")}>
@@ -644,7 +704,7 @@ export default function ShoppingList({
                 <strong>
                   {toBuy}
                   <small>
-                    unidades por comprar
+                    productos por reponer
                     <ChevronRight size={12} />
                   </small>
                 </strong>
@@ -661,8 +721,8 @@ export default function ShoppingList({
                       : "productos por configurar"}
                   </strong>
                   <p>
-                    Indica las existencias reales y cuánto queréis mantener. No
-                    hemos contado la antigua cesta como productos que ya tenéis.
+                    Solo indica cuánto debería haber de cada producto para
+                    empezar a descontar lo que usáis.
                   </p>
                   <button onClick={() => setStockFilter("Por configurar")}>
                     Revisar existencias
@@ -675,11 +735,10 @@ export default function ShoppingList({
               <div className="onboarding-note">
                 <House size={22} />
                 <div>
-                  <strong>Primero, cuenta lo que hay.</strong>
+                  <strong>Una cantidad y listo.</strong>
                   <p>
-                    Registra cada producto, las unidades que tenéis y las que
-                    queréis mantener. Después solo tendrás que descontar lo que
-                    usáis.
+                    Indica solo cuánto debería haber. Empezaremos con esa
+                    cantidad y después podrás ir restando lo que usáis.
                   </p>
                 </div>
               </div>
@@ -794,8 +853,11 @@ export default function ShoppingList({
         {tab === "shopping" && !shop && (
           <>
             <p className="page-subtitle">
-              {needs.length} {needs.length === 1 ? "producto" : "productos"} ·{" "}
-              {toBuy} {toBuy === 1 ? "unidad que falta" : "unidades que faltan"}
+              {needs.length}{" "}
+              {needs.length === 1
+                ? "producto por reponer"
+                : "productos por reponer"}{" "}
+              · cantidades según su formato
             </p>
             <div className="shopping-explanation">
               <ClipboardList size={21} />
@@ -846,10 +908,7 @@ export default function ShoppingList({
                         {s}
                       </h2>
                       <small>
-                        {needs
-                          .filter((p) => p.store === s)
-                          .reduce((a, p) => a + p.toBuy, 0)}{" "}
-                        unidades
+                        {needs.filter((p) => p.store === s).length} productos
                       </small>
                     </div>
                     <div className="product-card">
@@ -958,29 +1017,39 @@ export default function ShoppingList({
                       <span className="product-text">
                         <strong>{p.name}</strong>
                         <small>
-                          Hay {p.stockCount} · Objetivo {p.targetCount} ·{" "}
-                          {p.pack}
+                          Quedan {stockText(p)} · Debería haber{" "}
+                          {stockText(p, p.targetCount)}
                         </small>
                       </span>
-                      <span className="shopping-qty">Faltan {p.toBuy}</span>
+                      <span className="shopping-qty">{purchaseText(p)}</span>
                     </button>
                     {choice && (
                       <div className="purchase-quantity">
-                        <span>Unidades compradas</span>
+                        <span>Cantidad comprada · {purchaseUnit(p)}</span>
                         <div className="stepper">
                           <button
-                            aria-label={`Comprar una unidad menos de ${p.name}`}
-                            disabled={busy || choice.count <= 1}
+                            aria-label={`Reducir compra de ${p.name}`}
+                            disabled={
+                              busy ||
+                              choice.count <= (weighted(p.unit) ? 0.001 : 1)
+                            }
                             onClick={() => boughtCount(p, -1)}
                           >
                             <Minus size={17} />
                           </button>
-                          <span className="has-count">{choice.count}</span>
+                          <span className="has-count">
+                            {formatQuantity(choice.count)}
+                          </span>
                           <button
                             className="plus"
-                            aria-label={`Comprar una unidad más de ${p.name}`}
+                            aria-label={`Aumentar compra de ${p.name}`}
                             disabled={
-                              busy || choice.count >= 999 - p.stockCount
+                              busy ||
+                              choice.count >=
+                                Math.min(
+                                  999,
+                                  (maxStock(p) - p.stockCount) / baseFactor(p),
+                                )
                             }
                             onClick={() => boughtCount(p, 1)}
                           >
@@ -1000,9 +1069,7 @@ export default function ShoppingList({
               </div>
             )}
             <div className="checkout-bar">
-              <span>
-                {selected.reduce((a, p) => a + p.count, 0)} unidades compradas
-              </span>
+              <span>{selected.length} productos seleccionados</span>
               <button
                 className="primary"
                 disabled={!selected.length || busy}
@@ -1013,7 +1080,7 @@ export default function ShoppingList({
               </button>
             </div>
             <p className="footnote">
-              Las unidades se sumarán a lo que hay en casa.
+              La compra se sumará al inventario con la unidad de cada producto.
             </p>
           </>
         )}
@@ -1057,7 +1124,11 @@ export default function ShoppingList({
                         {actions[a.action] || "actualizó"}{" "}
                         <strong>{a.product}</strong>
                         {a.amount > 0 && (
-                          <span className="amount-label"> ×{a.amount}</span>
+                          <span className="amount-label">
+                            {" "}
+                            · {formatQuantity(a.amount)}{" "}
+                            {a.amount_unit || "ud."}
+                          </span>
                         )}
                       </p>
                       <time>{date(a.created_at)}</time>
@@ -1167,58 +1238,129 @@ export default function ShoppingList({
                 </label>
               </div>
               <div className="stock-form">
-                <div className="form-grid">
+                <label>
+                  Tipo de cantidad
+                  <select
+                    value={edit.unit || "unit"}
+                    onChange={(e) => {
+                      const unit = e.target.value as QuantityUnit;
+                      setEdit({ ...edit, unit });
+                      setStepInput(unit === "l" ? "0,25" : "0,1");
+                    }}
+                  >
+                    <option value="unit">Unidades</option>
+                    <option value="kg">Kilogramos (kg)</option>
+                    <option value="l">Litros (l)</option>
+                    <option value="pack">Packs</option>
+                  </select>
+                </label>
+                {edit.unit === "pack" && (
                   <label>
-                    Cuánto hay en casa
+                    Unidades en cada pack
                     <input
                       type="text"
                       inputMode="numeric"
-                      pattern="[0-9]*"
                       maxLength={3}
-                      placeholder="0"
-                      value={stockInput}
+                      placeholder="Ej. 6"
+                      value={packInput}
                       onChange={(e) => {
-                        const v = e.target.value;
-                        if (acceptsCount(v)) {
-                          setStockInput(v);
-                          if (!targetTouched) setTargetInput(v);
-                        }
+                        if (acceptsCount(e.target.value))
+                          setPackInput(e.target.value);
                       }}
                     />
+                    <small className="field-help">
+                      Ejemplo: un pack de leche contiene 6 briks.
+                    </small>
                   </label>
+                )}
+                <label>
+                  Debería haber (
+                  {edit.unit === "pack"
+                    ? "packs"
+                    : edit.unit === "kg"
+                      ? "kg"
+                      : edit.unit === "l"
+                        ? "l"
+                        : "unidades"}
+                  )
+                  <input
+                    type="text"
+                    inputMode={
+                      weighted(edit.unit || "unit") ? "decimal" : "numeric"
+                    }
+                    maxLength={8}
+                    placeholder="Ej. 3"
+                    value={amountInput}
+                    onChange={(e) => {
+                      if (acceptsAmount(e.target.value, edit.unit || "unit"))
+                        setAmountInput(e.target.value);
+                    }}
+                  />
+                </label>
+                {weighted(edit.unit || "unit") && (
                   <label>
-                    Cuánto quieres mantener
+                    Restar cada vez ({edit.unit})
                     <input
                       type="text"
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                      maxLength={3}
-                      placeholder="0"
-                      value={targetInput}
+                      inputMode="decimal"
+                      maxLength={8}
+                      placeholder={edit.unit === "kg" ? "0,1" : "0,25"}
+                      value={stepInput}
                       onChange={(e) => {
-                        if (acceptsCount(e.target.value)) {
-                          setTargetTouched(true);
-                          setTargetInput(e.target.value);
-                        }
+                        if (acceptsAmount(e.target.value, edit.unit || "kg"))
+                          setStepInput(e.target.value);
                       }}
                     />
+                    <small className="field-help">
+                      Por ejemplo: 0,1 kg son 100 gramos.
+                    </small>
                   </label>
-                </div>
+                )}
                 <p>
-                  Si quedan {Number(stockInput || 0)} y quieres tener{" "}
-                  {Number(targetInput || 0)}, la lista propondrá comprar{" "}
-                  <strong>
-                    {Math.max(
-                      0,
-                      Number(targetInput || 0) - Number(stockInput || 0),
-                    )}
-                  </strong>
-                  .
+                  {edit.id && edit.configured ? (
+                    <>
+                      Ahora quedan{" "}
+                      <strong>
+                        {stockText({
+                          unit: edit.unit || "unit",
+                          stockCount: edit.stockCount || 0,
+                        })}
+                      </strong>
+                      . Cambiar la cantidad prevista no repone lo consumido.
+                    </>
+                  ) : (
+                    <>
+                      Empezaremos con esta cantidad. Después descuenta lo que
+                      usas con el botón −.
+                    </>
+                  )}
                 </p>
+                {edit.unit === "pack" && (
+                  <p>
+                    Se cuentan las unidades del interior:{" "}
+                    {Number(amountInput || 0) || 0} packs ×{" "}
+                    {Number(packInput || 0) || 0} ={" "}
+                    <strong>
+                      {(Number(amountInput || 0) || 0) *
+                        (Number(packInput || 0) || 0)}{" "}
+                      unidades
+                    </strong>
+                    . Descuentas de una en una y la compra se propone en packs
+                    completos.
+                  </p>
+                )}
+                {edit.id &&
+                  edit.configured &&
+                  edit.unit !== items.find((p) => p.id === edit.id)?.unit && (
+                    <p>
+                      Si cambias entre unidades, kg o litros se iniciará un
+                      conteo nuevo con la cantidad indicada.
+                    </p>
+                  )}
               </div>
               <div className="form-grid">
                 <label>
-                  Formato
+                  Presentación (opcional)
                   <input
                     maxLength={60}
                     placeholder="Ej. paquete de 1 kg"
@@ -1227,7 +1369,15 @@ export default function ShoppingList({
                   />
                 </label>
                 <label>
-                  Precio por unidad (€)
+                  Precio por{" "}
+                  {edit.unit === "pack"
+                    ? "pack"
+                    : edit.unit === "kg"
+                      ? "kg"
+                      : edit.unit === "l"
+                        ? "litro"
+                        : "unidad"}{" "}
+                  (€)
                   <input
                     type="text"
                     inputMode="decimal"

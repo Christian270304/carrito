@@ -1965,3 +1965,49 @@ h1 {
     min-height: 120px;
   }
 }
+/* Cantidades con decimales y packs: no se suman medidas distintas en el resumen. */
+.stock-control .stepper > span {
+  width: auto;
+  min-width: 28px;
+  padding-inline: 3px;
+  font-size: 15px;
+}
+.stock-control {
+  max-width: 145px;
+}
+.buy-quantity strong {
+  font-size: 25px;
+}
+.buy-quantity > small {
+  max-width: 90px;
+  line-height: 1.5;
+}
+.inventory-status > span {
+  line-height: 1.5;
+}
+.purchase-quantity > span {
+  max-width: 130px;
+}
+.purchase-quantity .stepper > span {
+  width: auto;
+  min-width: 30px;
+  font-size: 14px;
+}
+.shopping-row .shopping-qty {
+  white-space: normal;
+  text-align: right;
+  max-width: 85px;
+  line-height: 1.6;
+}
+.stock-form > label {
+  padding-top: 15px;
+}
+.stock-form > label ~ label {
+  padding-top: 0;
+}
+@media (min-width: 600px) {
+  .stock-control .stepper > span {
+    min-width: 38px;
+    font-size: 17px;
+  }
+}
